@@ -104,7 +104,7 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,evaluate=ze
         J = evaluate(pol) 
 
         #Meta-optimization
-        alpha,N,safe = meta_selector.select(pol,g_stats,tp,N_old)
+        alpha,N,safe = meta_selector.select(pol,g_stats,tp,N_old,iteration)
         if not safe and verbose:
             print "Unsafe update!"
 

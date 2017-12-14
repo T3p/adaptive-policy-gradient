@@ -1,7 +1,6 @@
 import numpy as np
 import math
 import adabatch
-import exp_lqg1d
 
 from gradient_estimation import *
 from policies import GaussPolicy
@@ -80,7 +79,7 @@ meta_optimizers = [MetaOptimizer('chebyshev',con,estimator_name='reinforce'),
                     MetaOptimizer('bernstein',con,samp=False),
                     MetaOptimizer('bernstein',con)]
 for mo in meta_optimizers:
-    print mo.select(pol,gs,tp,N_pre=300)
+    print mo.select(pol,gs,tp,N_pre=300,iteration=1)
 
 print
 print "---- TESTS COMPLETED ----"

@@ -132,12 +132,17 @@ def estError(d,f,N):
 class MetaSelector:
     """Meta-parameters for the policy gradient problem"""
     def __init__(self,alpha,N):
-        self.alpha = alpha
+        self.alpha = np.atleast_1d(alpha)
         self.N = N
 
-    def select(self,pol,gs,tp,N_pre):
+    def select(self,pol,gs,tp,N_pre,iteration):
         return self.alpha,self.N,False
 
+ConstMeta = MetaSelector
+
+class VanishingMeta(MetaSelector):
+    def select(self,pol,gs,tp,N_pre,iteration):
+        return self.alpha/math.sqrt(iteration),self.N,False
 
 class MetaOptimizer(MetaSelector):
     """Tool to compute the optimal meta-parameters for a policy gradient problem"""
@@ -153,7 +158,7 @@ class MetaOptimizer(MetaSelector):
         self.estimator_name = estimator_name
         self.samp = samp
 
-    def select(self,pol,gs,tp,N_pre):
+    def select(self,pol,gs,tp,N_pre,iteration):
         """Compute optimal step size and batch size
 
             Parameters:
