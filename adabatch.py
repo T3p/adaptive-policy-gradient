@@ -27,7 +27,7 @@ def __trajectory(env,tp,pol,feature_fun,traces,n,initial=None,noises=[]):
         s,r,_,_ = env.step(a)
         traces[n,l] = np.concatenate((np.atleast_1d(phi),np.atleast_1d(a),np.atleast_1d(r)))
 
-def learn(env,tp,pol,feature_fun,constr,bound_name='bernstein',estimator_name='gpomdp',emp=True,evaluate=zero_fun,parallel=True,filepath='results/record.h5',verbose=1):
+def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,evaluate=zero_fun,parallel=True,filepath='results/record.h5',verbose=1):
     """
         Vanilla policy gradient with adaptive step size and batch size
         
@@ -47,8 +47,8 @@ def learn(env,tp,pol,feature_fun,constr,bound_name='bernstein',estimator_name='g
     N = N_old = constr.N_min   
 
     #Optimizer settings
-    grad_estimator = Estimator(estimator_name)
-    meta_selector = MetaOptimizer(bound_name,constr,estimator_name,emp)   
+    #grad_estimator = Estimator(estimator_name)
+    #meta_selector = MetaOptimizer(bound_name,constr,estimator_name,emp)   
 
     #Multiprocessing preparation
     if parallel:
@@ -65,7 +65,7 @@ def learn(env,tp,pol,feature_fun,constr,bound_name='bernstein',estimator_name='g
 
     #Initial print
     if verbose:
-        print 'Estimator: ', estimator_name,  ' Bound: ', bound_name,  ' Empirical range: ', emp,  ' delta =', constr.delta
+        print meta_selector
         print 'Start Experiment'
         print  
 

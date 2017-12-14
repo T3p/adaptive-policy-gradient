@@ -129,7 +129,8 @@ def estError(d,f,N):
     return float(d)/math.sqrt(N) + float(f)/N
 
 
-class metaSelector:
+class MetaSelector:
+    """Meta-parameters for the policy gradient problem"""
     def __init__(self,alpha,N):
         self.alpha = alpha
         self.N = N
@@ -138,17 +139,18 @@ class metaSelector:
         return self.alpha,self.N,False
 
 
-class MetaOptimizer(metaSelector):
+class MetaOptimizer(MetaSelector):
     """Tool to compute the optimal meta-parameters for a policy gradient problem"""
 
-    def __init__(self,bound_name='bernstein',constr=default_constr,estimator='gpomdp',samp=True):
+    def __init__(self,bound_name='bernstein',constr=default_constr,estimator_name='gpomdp',samp=True):
 
         
         bounds = {'chebyshev': self.__chebyshev, 'hoeffding': self.__hoeffding, 'bernstein': self.__bernstein}
 
+        self.bound_name = bound_name
         self.bound = bounds[bound_name]
         self.constr = constr
-        self.estimator = estimator
+        self.estimator_name = estimator_name
         self.samp = samp
 
     def select(self,pol,gs,tp,N_pre):
@@ -177,6 +179,9 @@ class MetaOptimizer(metaSelector):
 
         return alpha,N,safe 
 
+    def __str__(self):
+        return 'Estimator: {}, Bound: {}, Empirical range: {}, delta = {}'.format(self.estimator_name,self.bound_name,self.samp,self.constr.delta)
+
     def __closedOpt(self,d,max_grad):
         #Generic closed form optimization for N and corresponding estimation error
 
@@ -187,10 +192,10 @@ class MetaOptimizer(metaSelector):
 
     def __chebyshev(self,pol,gs,tp):
         #Batch size optimizer using Chebyshev's bound
-        if self.estimator=='reinforce':
+        if self.estimator_name=='reinforce':
             d =  math.sqrt((tp.R**2*tp.M**2*tp.H*(1-tp.gamma**tp.H)**2)/ \
                     (pol.sigma**2*(1-tp.gamma)**2*self.constr.delta))
-        elif self.estimator=='gpomdp':
+        elif self.estimator_name=='gpomdp':
             d = math.sqrt((tp.R**2*tp.M**2)/(self.constr.delta*pol.sigma**2*(1-tp.gamma)**2) * \
                            ((1-tp.gamma**(2*tp.H))/(1-tp.gamma**2)+ tp.H*tp.gamma**(2*tp.H)  - \
                                 2 * tp.gamma**tp.H  * (1-tp.gamma**tp.H)/(1-tp.gamma)))

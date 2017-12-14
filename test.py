@@ -73,7 +73,7 @@ assert gs.get_estimate()==10
 assert gs.get_range()==100
 assert gs.get_var()==2500
 
-meta_optimizers = [MetaOptimizer('chebyshev',con,estimator='reinforce'), 
+meta_optimizers = [MetaOptimizer('chebyshev',con,estimator_name='reinforce'), 
                     MetaOptimizer('chebyshev',con),
                     MetaOptimizer('hoeffding',con,samp=False),
                     MetaOptimizer('hoeffding',con),
