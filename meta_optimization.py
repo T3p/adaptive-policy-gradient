@@ -30,6 +30,13 @@ class TaskProp:
         self.volume = volume
         self.diameter = diameter
 
+    def update(self,features,actions,rewards):
+        self.R = np.amax(abs(rewards))
+        self.max_state = np.amax(features,(0,1))
+        self.min_state = np.amin(features,(0,1))
+        self.M = np.amax(abs(features))
+        self.volume = np.amax(actions) - np.amin(actions) #<- scalar casc
+
 
 class GradStats:
     """Statistics about a gradient estimate"""
@@ -106,6 +113,7 @@ def alphaPost(pol,tp,max_grad,eps):
         gs -- GradStats object containing statistics on the last gradient estimate
     """
     c = pol.penaltyCoeff(tp.R,tp.M,tp.gamma,tp.volume)
+    print 'c = ', c
     return (max_grad - eps)**2/(2*c*(max_grad + eps)**2)
 
 def gradRange(pol,tp):
@@ -129,7 +137,7 @@ def estError(d,f,N):
     return float(d)/math.sqrt(N) + float(f)/N
 
 
-class MetaSelector:
+class MetaSelector(object):
     """Meta-parameters for the policy gradient problem"""
     def __init__(self,alpha,N):
         self.alpha = np.atleast_1d(alpha)
@@ -141,8 +149,13 @@ class MetaSelector:
 ConstMeta = MetaSelector
 
 class VanishingMeta(MetaSelector):
+    def __init__(self,alpha,N,alpha_exp=0.5,N_exp = 0):
+        super(VanishingMeta,self).__init__(alpha,N)
+        self.alpha_exp = alpha_exp
+        self.N_exp = N_exp
+
     def select(self,pol,gs,tp,N_pre,iteration):
-        return self.alpha/math.sqrt(iteration),self.N,False
+        return self.alpha/(iteration**self.alpha_exp),self.N*iteration**self.N_exp,False
 
 class MetaOptimizer(MetaSelector):
     """Tool to compute the optimal meta-parameters for a policy gradient problem"""

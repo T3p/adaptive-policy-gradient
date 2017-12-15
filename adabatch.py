@@ -27,7 +27,7 @@ def __trajectory(env,tp,pol,feature_fun,traces,n,initial=None,noises=[]):
         s,r,_,_ = env.step(a)
         traces[n,l] = np.concatenate((np.atleast_1d(phi),np.atleast_1d(a),np.atleast_1d(r)))
 
-def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,evaluate=zero_fun,parallel=True,filepath='results/record.h5',verbose=1):
+def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,evaluate=zero_fun,parallel=True,filepath='results/record.h5',verbose=1):
     """
         Vanilla policy gradient with adaptive step size and batch size
         
@@ -94,6 +94,10 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,evaluate=ze
         features = traces[:,:,:pol.feat_dim]
         actions = traces[:,:,pol.feat_dim:pol.feat_dim+pol.act_dim]
         rewards = traces[:,:,-1]    
+
+        #Local task properties
+        if local:
+            tp.update(features,actions,rewards)
 
         #Gradient statistics
         grad_samples = grad_estimator.estimate(features,actions,rewards,tp.gamma,pol,average=False)

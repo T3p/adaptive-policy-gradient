@@ -37,9 +37,9 @@ class LQG1D(gym.Env):
     }
 
     def __init__(self, discrete_reward=False):
-        self.horizon = 20
-        self.gamma = 0.9
-
+        self.horizon = 4
+        self.gamma = 0.99
+        self.sigma_controller = 1
         self.discrete_reward = discrete_reward
         self.max_pos = 2.0
         self.max_action = 2.0
@@ -219,7 +219,7 @@ class LQG1D(gym.Env):
                                              np.dot(P, self.B))))) 
         
         if np.size(K)==1:
-            return np.asscalar(-self.max_pos**2*P/3 - W)
+            return min(0,np.asscalar(-self.max_pos**2*P/3 - W))
 
         J = 0.0
         for i in range(n_random_x0):
@@ -228,7 +228,7 @@ class LQG1D(gym.Env):
             J -= np.dot(x0.T, np.dot(P, x0)) \
                 +  W      
         J /= n_random_x0
-        return J
+        return min(0,J)
 
     def computeQFunction(self, x, u, K, Sigma, n_random_xn=100):
         """
@@ -275,64 +275,10 @@ class LQG1D(gym.Env):
         Qfun = np.asscalar(Qfun) / n_random_xn
         return Qfun
 
-        # TODO check following code
 
-        # def computeM(self, K):
-        #     kb = np.dot(K, self.B.T)
-        #     size = self.A.shape[1] ** 2;
-        #     AT = self.A.T
-        #     return np.eye(size) - self.gamma * (np.kron(AT, AT) - np.kron(AT, kb) - np.kron(kb, AT) + np.kron(kb, kb))
-        #
-        # def computeL(self, K):
-        #     return self.Q + np.dot(K, np.dot(self.R, K.T))
-        #
-        # def to_vec(self, m):
-        #     n_dim = self.A.shape[1]
-        #     v = m.reshape(n_dim * n_dim, 1)
-        #     return v
-        #
-        # def to_mat(self, v):
-        #     n_dim = self.A.shape[1]
-        #     M = v.reshape(n_dim, n_dim)
-        #     return M
-        #
-        # def computeJ(self, k, Sigma, n_random_x0=100):
-        #     J = 0
-        #     K = k
-        #     if len(k.shape) == 1:
-        #         K = np.diag(k)
-        #     P = self.computeP(K)
-        #     for i in range(n_random_x0):
-        #         self.reset()
-        #         x0 = self.state
-        #         v = np.asscalar(x0.T * P * x0 + np.trace(
-        #             np.dot(Sigma, (self.R + np.dot(self.gamma, np.dot(self.B.T, np.dot(P, self.B)))))) / (1.0 - self.gamma))
-        #         J += -v
-        #     J /= n_random_x0
-        #
-        #     return J
-        #
-        # def solveRiccati(self, k):
-        #     K = k
-        #     if len(k.shape) == 1:
-        #         K = np.diag(k)
-        #     return self.computeP(K)
-        #
-        # def riccatiRHS(self, k, P, r):
-        #     K = k
-        #     if len(k.shape) == 1:
-        #         K = np.diag(k)
-        #     return self.Q + self.gamma * (np.dot(self.A.T, np.dot(self.P, self.A))
-        #                                   - np.dot(K, np.dot(self.B.T, np.dot(self.P, self.A)))
-        #                                   - np.dot(self.A.T, np.dot(self.P, np.dot(self.B, K.T)))
-        #                                   + np.dot(K, np.dot(self.B.T, np.dot(self.P, np.dot(self.B, K.T))))) \
-        #            + np.dot(K, np.dot(self.R, K.T))
-        #
-        # def computeP(self, K):
-        #     L = self.computeL(K)
-        #     M = self.computeM(K)
-        #
-        #     vecP = np.linalg.solve(M, self.to_vec(L))
-        #
-        #     P = self.to_mat(vecP)
-        #     return P
+if __name__ == '__main__':
+
+    env = LQG1D()
+    theta_star = env.computeOptimalK()
+    print 'theta^* = ', theta_star
+    print 'J^* = ', env.computeJ(theta_star,env.sigma_controller)
