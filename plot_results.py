@@ -5,7 +5,7 @@ import numpy as np
 #[N, alpha, k, J, J^]
 # 0    1    2  3  4
 
-filename = 'record.h5'
+filename = 'prova_bernstein.h5'
 filepath = 'results/' + filename
 fp = tables.open_file(filepath, mode='r')
 data = fp.root.data
