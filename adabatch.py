@@ -98,18 +98,15 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,
         rewards = traces[:,:,-1]    
 
         #Local task properties
-        if local:
-            tp.update(features,actions,rewards)
+        tp.update(features,actions,rewards,local)
 
         #Gradient statistics
         grad_samples = grad_estimator.estimate(features,actions,rewards,tp.gamma,pol,average=False)
         g_stats = GradStats(grad_samples)
 
-        print g_stats.max_grad
-
         #Performance statistics 
         J_hat = performance(rewards,tp.gamma)
-        J = evaluate(pol) 
+        J = evaluate(pol,rewards) 
 
         #Meta-optimization
         alpha,N,safe = meta_selector.select(pol,g_stats,tp,N_old,iteration)

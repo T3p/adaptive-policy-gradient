@@ -18,25 +18,42 @@ class TaskProp:
             volume -- volume of the action space
             diameter -- maximum euclidean distance among possible actions
         """
-        self.R = R
-        self.M = M
         self.gamma = gamma
-        self.H = H
-        self.diameter = diameter
-        self.min_state = min_state
-        self.max_state = max_state
-        self.min_action = min_action
-        self.max_action = max_action
-        self.volume = volume
-        self.diameter = diameter
+        self.H = H 
+        self.min_action = np.atleast_1d(min_action)
+        self.max_action = np.atleast_1d(max_action)
 
-    def update(self,features,actions,rewards):
-        self.R = np.amax(abs(rewards))
-        self.max_state = np.amax(features,(0,1))
-        self.min_state = np.amin(features,(0,1))
-        self.M = np.amax(abs(features))
-        self.volume = np.amax(actions) - np.amin(actions) #<- scalar casc
-        self.diameter = np.linalg.norm(np.atleast_1d(self.max_action) - np.atleast_1d(self.min_action),2)
+        self.R = 0 if R==None else R
+        self.M = 0 if M==None else M
+        self.diameter = 0 if diameter==None else diameter
+        self.min_state = np.inf if min_state==None else np.atleast_1d(min_state)
+        self.max_state = -np.inf if max_state==None else np.atleast_1d(max_state)
+        self.volume = 0 if volume==None else volume
+        self.diameter = 0 if diameter==None else diameter
+
+        self.min_action_seen = np.inf
+        self.max_action_seen = -np.inf
+
+    def update(self,features,actions,rewards,local=False):
+        R = np.amax(abs(rewards))
+        max_state = np.amax(features,(0,1))
+        min_state = np.amin(features,(0,1))
+        M = np.amax(abs(features))
+        self.R = R if local else max(self.R,R)
+        self.max_state = max_state if local else np.maximum(self.max_state,max_state)
+        self.min_state = min_state if local else np.minimum(self.min_state,min_state)
+        self.M = M if local else max(self.M,M)
+
+        min_action_seen = np.amin(actions,(0,1))
+        max_action_seen = np.amax(actions,(0,1))
+        self.min_action_seen = min_action_seen if local else np.minimum(self.min_action_seen,min_action_seen)
+        self.max_action_seen = max_action_seen if local else np.maximum(self.max_action_seen,max_action_seen)
+        volume = np.multiply.reduce(self.max_action_seen - self.min_action_seen) #<- box
+        diameter = np.linalg.norm(np.atleast_1d(self.max_action_seen) - np.atleast_1d(self.min_action_seen),2)
+        self.volume = max(self.volume,volume)
+        self.diameter = max(self.diameter,diameter)
+
+        #print R,M,volume
 
 
 class GradStats:
@@ -115,7 +132,7 @@ def alphaPost(pol,tp,max_grad,eps):
         gs -- GradStats object containing statistics on the last gradient estimate
     """
     c = pol.penaltyCoeff(tp.R,tp.M,tp.gamma,tp.volume)
-    print 'c = ', c
+    #print 'c = ', c
     return (max_grad - eps)**2/(2*c*(max_grad + eps)**2)
 
 def gradRange(pol,tp):

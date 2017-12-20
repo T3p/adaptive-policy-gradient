@@ -12,9 +12,8 @@ data = fp.root.data
 n_entries = fp.root.data[:,:].shape[0]
 cumul_N = np.cumsum(data[:,0])
 plt.title('Expected performance over trajectories')
-plt.plot(cumul_N,data[:,4])
-
+plt.plot(cumul_N,data[:,3])
 plt.show()
 
-#plt.plot(cumul_N,data[:,3])
+#plt.plot(cumul_N,data[:,4])
 #plt.show()
