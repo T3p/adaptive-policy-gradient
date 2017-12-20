@@ -16,5 +16,5 @@ plt.plot(cumul_N,data[:,4])
 
 plt.show()
 
-plt.plot(cumul_N,data[:,3])
-plt.show()
+#plt.plot(cumul_N,data[:,3])
+#plt.show()

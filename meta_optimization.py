@@ -74,7 +74,7 @@ class GradStats:
 class OptConstr:
     """Constraints on the meta-optimization process"""
 
-    def __init__(self,delta=0.95,N_min=2,N_max=999999,N_tot=30000000):
+    def __init__(self,delta=0.95,N_min=2,N_max=999999,N_tot=30000000,max_iter=30000000):
         """Parameters:
             delta : maximum allowed worsening probability
             N_min : min allowed batch size
@@ -86,6 +86,7 @@ class OptConstr:
         self.N_min = N_min
         self.N_max = N_max
         self.N_tot = N_tot
+        self.max_iter = max_iter
 
 #Default constraints
 default_constr = OptConstr()

@@ -27,7 +27,7 @@ def run(estimator_name='gpomdp',alpha=1e-4,N=100,parallel=True,filename='record.
     )
 
     #Policy
-    theta_0 = 0
+    theta_0 = -0.01
     sigma = env.sigma_controller
     pol = GaussPolicy(theta_0,sigma**2)
 
@@ -41,7 +41,8 @@ def run(estimator_name='gpomdp',alpha=1e-4,N=100,parallel=True,filename='record.
     constr = OptConstr(
                 N_min=1,
                 N_max=500000,
-                N_tot = 30000000
+                N_tot = 30000000,
+                max_iter = 200
     )
 
     #Meta optimization
@@ -55,6 +56,7 @@ def run(estimator_name='gpomdp',alpha=1e-4,N=100,parallel=True,filename='record.
     adabatch.learn(env,tp,pol,phi,constr,
         grad_estimator,
         meta_selector,
+        True,
         eval_lqg,
         parallel,
         'results/' + filename,
@@ -65,8 +67,8 @@ def run(estimator_name='gpomdp',alpha=1e-4,N=100,parallel=True,filename='record.
 if __name__ == '__main__':    
     run(
         estimator_name = 'gpomdp',
-        alpha = 1e-4,
-        N = 1,
+        alpha = 1e-3,
+        N = 100,
         parallel = False
     )
         
