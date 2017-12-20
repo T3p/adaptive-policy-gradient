@@ -22,10 +22,12 @@ def __trajectory(env,tp,pol,feature_fun,traces,n,initial=None,noises=[]):
 
     s = env.reset(initial)
     for l in range(tp.H): 
-        phi = feature_fun(s)
+        phi = feature_fun(np.ravel(s))
         a = np.clip(pol.act(phi,noises[l]),tp.min_action,tp.max_action)
-        s,r,_,_ = env.step(a)
+        s,r,done,_ = env.step(a) 
         traces[n,l] = np.concatenate((np.atleast_1d(phi),np.atleast_1d(a),np.atleast_1d(r)))
+        if(done):
+            break
 
 def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,evaluate=zero_fun,parallel=True,filepath='results/record.h5',verbose=1):
     """

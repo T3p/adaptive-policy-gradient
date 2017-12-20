@@ -5,7 +5,7 @@ from gradient_estimation import Estimator
 class TaskProp:
     """Properties of the RL task, true or estimated from experience"""
 
-    def __init__(self,R,M,gamma,H,min_state,max_state,min_action,max_action,volume,diameter=None):
+    def __init__(self,gamma,H,min_action,max_action,R=None,M=None,min_state=None,max_state=None,volume=None,diameter=None):
         """Parameters:
             R -- max absolute-value reward
             M -- upper bound on all state features
@@ -36,6 +36,7 @@ class TaskProp:
         self.min_state = np.amin(features,(0,1))
         self.M = np.amax(abs(features))
         self.volume = np.amax(actions) - np.amin(actions) #<- scalar casc
+        self.diameter = np.linalg.norm(np.atleast_1d(self.max_action) - np.atleast_1d(self.min_action),2)
 
 
 class GradStats:
