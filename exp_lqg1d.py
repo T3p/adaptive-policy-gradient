@@ -40,14 +40,14 @@ def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),pa
 
     #Constraints
     constr = OptConstr(
-                N_min=1,
+                N_min=100,
                 N_max=500000,
                 N_tot = 30000000,
                 max_iter = 200
     )
 
     #Evaluation of expected performance
-    def eval_lqg(pol):
+    def eval_lqg(pol,rewards):
         return env.computeJ(pol.theta_mat,pol.cov)
 
     #Run
@@ -64,13 +64,7 @@ def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),pa
 
 if __name__ == '__main__':    
     #Vanilla
-    run(
-        estimator_name = 'gpomdp',
-        meta_selector = VanishingMeta(1e-3,100),
-        parallel = False
-    )
+    #run(estimator_name = 'gpomdp', meta_selector = VanishingMeta(1e-3,100), parallel = False)
         
     #Adabatch
-    #run(meta_selector = MetaOptimizer(),
-    #    parallel = False
-    #)
+    run(meta_selector = MetaOptimizer(), parallel = False)

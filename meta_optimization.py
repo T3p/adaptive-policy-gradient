@@ -179,7 +179,7 @@ class VanishingMeta(MetaSelector):
 class MetaOptimizer(MetaSelector):
     """Tool to compute the optimal meta-parameters for a policy gradient problem"""
 
-    def __init__(self,bound_name='bernstein',constr=default_constr,estimator_name='gpomdp',samp=True):
+    def __init__(self,bound_name='bernstein',constr=default_constr,estimator_name='gpomdp',samp=True,cost_sensitive_step=False):
 
         
         bounds = {'chebyshev': self.__chebyshev, 'hoeffding': self.__hoeffding, 'bernstein': self.__bernstein}
@@ -189,6 +189,7 @@ class MetaOptimizer(MetaSelector):
         self.constr = constr
         self.estimator_name = estimator_name
         self.samp = samp
+        self.cs_step = cost_sensitive_step
 
     def select(self,pol,gs,tp,N_pre,iteration):
         """Compute optimal step size and batch size
@@ -208,6 +209,10 @@ class MetaOptimizer(MetaSelector):
         actual_eps = estError(d,f,N_pre)
         
         alpha_k = alphaPost(pol,tp,gs.get_max(),actual_eps)
+
+        if(self.cs_step):
+            alpha_k = 2*alpha_k
+
         N = min(self.constr.N_max,max(self.constr.N_min,N_star))
         safe = eps_star<gs.get_max()
 
