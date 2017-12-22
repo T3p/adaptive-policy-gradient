@@ -90,3 +90,7 @@ ENV/
 
 #Temp files
 .mmap
+
+#Vim
+*~
+.*.s??
