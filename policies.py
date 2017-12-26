@@ -91,7 +91,7 @@ class GaussPolicy:
         
         return np.asscalar(score) if np.size(score)==1 else np.ravel(score)
 
-    def penaltyCoeff(self,R,M,gamma,volume):
+    def penaltyCoeff(self,R,M,gamma,volume,c=None):
         """Penalty coefficient for performance improvement bounds
 
         Parameters:
@@ -100,6 +100,9 @@ class GaussPolicy:
         gamma -- discount factor
         volume -- volume of the action space
         """
+        if not c==None:
+            return c
+
         return float(R*M**2)/((1-gamma)**2*self.sigma**2)* \
             (float(volume)/math.sqrt(2*math.pi*self.sigma**2) + \
                 float(gamma)/(2*(1-gamma)))

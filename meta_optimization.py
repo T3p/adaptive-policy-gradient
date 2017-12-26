@@ -110,31 +110,6 @@ class OptConstr:
 default_constr = OptConstr()
 
 
-def alphaStar(pol,tp):
-    """Optimal step size for the adaBatch algorithm when the corresponding optimal
-        batch size is used
-
-        Parameters:
-        pol -- policy in use
-        tp -- TaskProp object containing the (true or last estimated) properties of the task
-   """
-
-    c = pol.penaltyCoeff(tp.R,tp.M,tp.gamma,tp.volume)
-    return (13-3*math.sqrt(17))/(4*c)
-
-def alphaPost(pol,tp,max_grad,eps):
-    """Optimal step size given an upper bound of the estimaton error,
-        depending on the batch size that is actually used
-        
-        Parameters:
-        pol -- policy in use
-        tp -- TaskProp object containing the (true or last estimated) properties of the task
-        gs -- GradStats object containing statistics on the last gradient estimate
-    """
-    c = pol.penaltyCoeff(tp.R,tp.M,tp.gamma,tp.volume)
-    #print 'c = ', c
-    return (max_grad - eps)**2/(2*c*(max_grad + eps)**2)
-
 def gradRange(pol,tp):
     """Range of the gradient estimate
         
@@ -179,7 +154,7 @@ class VanishingMeta(MetaSelector):
 class MetaOptimizer(MetaSelector):
     """Tool to compute the optimal meta-parameters for a policy gradient problem"""
 
-    def __init__(self,bound_name='bernstein',constr=default_constr,estimator_name='gpomdp',samp=True,cost_sensitive_step=False):
+    def __init__(self,bound_name='bernstein',constr=default_constr,estimator_name='gpomdp',samp=True,cost_sensitive_step=False,c=None):
 
         
         bounds = {'chebyshev': self.__chebyshev, 'hoeffding': self.__hoeffding, 'bernstein': self.__bernstein}
@@ -190,6 +165,33 @@ class MetaOptimizer(MetaSelector):
         self.estimator_name = estimator_name
         self.samp = samp
         self.cs_step = cost_sensitive_step
+        self.c = c
+
+    def alphaStar(self,pol,tp):
+        """Optimal step size for the adaBatch algorithm when the corresponding optimal
+            batch size is used
+
+            Parameters:
+            pol -- policy in use
+            tp -- TaskProp object containing the (true or last estimated) properties of the task
+       """
+
+        c = pol.penaltyCoeff(tp.R,tp.M,tp.gamma,tp.volume,self.c)
+        return (13-3*math.sqrt(17))/(4*c)
+
+    def alphaPost(self,pol,tp,max_grad,eps):
+        """Optimal step size given an upper bound of the estimaton error,
+            depending on the batch size that is actually used
+            
+            Parameters:
+            pol -- policy in use
+            tp -- TaskProp object containing the (true or last estimated) properties of the task
+            gs -- GradStats object containing statistics on the last gradient estimate
+        """
+        c = pol.penaltyCoeff(tp.R,tp.M,tp.gamma,tp.volume,self.c)
+        #print 'c = ', c
+        return (max_grad - eps)**2/(2*c*(max_grad + eps)**2)
+
 
     def select(self,pol,gs,tp,N_pre,iteration):
         """Compute optimal step size and batch size
@@ -208,7 +210,7 @@ class MetaOptimizer(MetaSelector):
         d,f,eps_star,N_star = self.bound(pol,gs,tp)
         actual_eps = estError(d,f,N_pre)
         
-        alpha_k = alphaPost(pol,tp,gs.get_max(),actual_eps)
+        alpha_k = self.alphaPost(pol,tp,gs.get_max(),actual_eps)
 
         if(self.cs_step):
             alpha_k = 2*alpha_k
@@ -271,7 +273,7 @@ class MetaOptimizer(MetaSelector):
         else:
             rng = gradRange(pol,tp)
 
-        c = pol.penaltyCoeff(tp.R,tp.M,tp.gamma,tp.volume)
+        c = pol.penaltyCoeff(tp.R,tp.M,tp.gamma,tp.volume,self.c)
         d = math.sqrt(2*math.log(3.0/self.constr.delta)*gs.get_var())
         f = 3*rng*math.log(3.0/self.constr.delta)
 
@@ -280,14 +282,14 @@ class MetaOptimizer(MetaSelector):
         ups_max = -np.inf
         eps_star = np.inf
         N_star = N_0
-        for n in range(N_0,self.constr.N_max):
-            ups,eps = self.__evaluateN(n,d,f,c,gs.get_max())
-            if ups>ups_max:
-                ups_max = ups
-                eps_star = eps
-                N_star = n
-            else:
-                break
+        #for n in range(N_0,self.constr.N_max):
+        #    ups,eps = self.__evaluateN(n,d,f,c,gs.get_max())
+        #    if ups>ups_max:
+        #        ups_max = ups
+        #        eps_star = eps
+        #        N_star = n
+        #    else:
+        #        break
 
         return d,f,eps_star,N_star
 

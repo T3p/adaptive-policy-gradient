@@ -32,8 +32,9 @@ def run(estimator_name='gpomdp',meta_selector=ConstMeta(alpha=1e-2*np.ones(4),N=
 
     #Constraints
     constr = OptConstr(
-                N_min=2,
-                N_max=500000,
+                delta = 0.1,
+                N_min=100,
+                N_max=10000,
                 N_tot = 30000000,
                 max_iter = 200
     )
@@ -57,12 +58,7 @@ def run(estimator_name='gpomdp',meta_selector=ConstMeta(alpha=1e-2*np.ones(4),N=
 if __name__ == '__main__':    
 
     #Vanilla
-    run(
-        meta_selector = ConstMeta(np.ones(4)*1e-2,N = 100),
-        parallel = False
-    )
+    #run(meta_selector = ConstMeta(np.ones(4)*1e-2,N = 100),parallel = False)
 
     #Adabatch
-    #run(
-    #    meta_selector = MetaOptimizer(),
-    #    parallel=False)
+    run(meta_selector = MetaOptimizer(),parallel=False)

@@ -40,6 +40,7 @@ def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),pa
 
     #Constraints
     constr = OptConstr(
+                delta = 0.1,
                 N_min=100,
                 N_max=500000,
                 N_tot = 30000000,
