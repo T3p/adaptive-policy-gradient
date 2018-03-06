@@ -229,6 +229,43 @@ class LQG1D(gym.Env):
                 +  W      
         J /= n_random_x0
         return min(0,J)
+    
+    def grad_K(self, K, Sigma):    
+        I = np.eye(self.Q.shape[0], self.Q.shape[1])
+        if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
+            raise NotImplementedError
+        if not isinstance(K,Number) or not isinstance(Sigma, Number):
+            raise NotImplementedError
+        theta = np.asscalar(np.array(K))
+        sigma = np.asscalar(np.array(Sigma))
+        
+        den = 1 - self.gamma*(1 + 2*theta + theta**2)
+        dePdeK = 2*(theta*self.R/den + self.gamma*(self.Q + theta**2*self.R)*(1+theta)/den**2)
+        return np.asscalar(- dePdeK*(self.max_pos/3 + self.gamma*sigma/(1 - self.gamma)))
+        
+    def grad_Sigma(self, K, Sigma=None):
+        I = np.eye(self.Q.shape[0], self.Q.shape[1])
+        if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
+            raise NotImplementedError
+        if not isinstance(K,Number) or not isinstance(Sigma, Number):
+            raise NotImplementedError
+
+        K = np.array(K)
+        P = self._computeP2(K)
+        return np.asscalar(-(self.R + self.gamma*P)/(1 - self.gamma))
+    
+    def grad_mixed(self, K, Sigma=None):
+        I = np.eye(self.Q.shape[0], self.Q.shape[1])
+        if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
+            raise NotImplementedError
+        if not isinstance(K,Number) or not isinstance(Sigma, Number):
+            raise NotImplementedError
+        theta = np.asscalar(np.array(K))
+        
+        den = 1 - self.gamma*(1 + 2*theta + theta**2)
+        dePdeK = 2*(theta*self.R/den + self.gamma*(self.Q + theta**2*self.R)*(1+theta)/den**2)
+
+        return np.asscalar(-dePdeK*self.gamma/(1 - self.gamma))
 
     def computeQFunction(self, x, u, K, Sigma, n_random_xn=100):
         """
@@ -280,5 +317,5 @@ if __name__ == '__main__':
 
     env = LQG1D()
     theta_star = env.computeOptimalK()
-    print 'theta^* = ', theta_star
-    print 'J^* = ', env.computeJ(theta_star,env.sigma_controller)
+    print('theta^* = ', theta_star)
+    print('J^* = ', env.computeJ(theta_star,env.sigma_controller))
