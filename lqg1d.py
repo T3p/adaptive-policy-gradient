@@ -216,8 +216,8 @@ class LQG1D(gym.Env):
         W =  (1 / (1 - self.gamma)) * \
                 np.trace(np.dot(
                     Sigma, (self.R + self.gamma * np.dot(self.B.T,
-                                             np.dot(P, self.B))))) 
-        
+                                             np.dot(P, self.B)))))
+
         if np.size(K)==1:
             return min(0,np.asscalar(-self.max_pos**2*P/3 - W))
 
@@ -226,11 +226,11 @@ class LQG1D(gym.Env):
             self.reset()
             x0 = self.get_state()
             J -= np.dot(x0.T, np.dot(P, x0)) \
-                +  W      
+                +  W
         J /= n_random_x0
         return min(0,J)
-    
-    def grad_K(self, K, Sigma):    
+
+    def grad_K(self, K, Sigma):
         I = np.eye(self.Q.shape[0], self.Q.shape[1])
         if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
             raise NotImplementedError
@@ -238,11 +238,11 @@ class LQG1D(gym.Env):
             raise NotImplementedError
         theta = np.asscalar(np.array(K))
         sigma = np.asscalar(np.array(Sigma))
-        
+
         den = 1 - self.gamma*(1 + 2*theta + theta**2)
         dePdeK = 2*(theta*self.R/den + self.gamma*(self.Q + theta**2*self.R)*(1+theta)/den**2)
-        return np.asscalar(- dePdeK*(self.max_pos/3 + self.gamma*sigma/(1 - self.gamma)))
-        
+        return np.asscalar(- dePdeK*(self.max_pos**2/3 + self.gamma*sigma/(1 - self.gamma)))
+
     def grad_Sigma(self, K, Sigma=None):
         I = np.eye(self.Q.shape[0], self.Q.shape[1])
         if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
@@ -253,7 +253,7 @@ class LQG1D(gym.Env):
         K = np.array(K)
         P = self._computeP2(K)
         return np.asscalar(-(self.R + self.gamma*P)/(1 - self.gamma))
-    
+
     def grad_mixed(self, K, Sigma=None):
         I = np.eye(self.Q.shape[0], self.Q.shape[1])
         if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
@@ -261,7 +261,7 @@ class LQG1D(gym.Env):
         if not isinstance(K,Number) or not isinstance(Sigma, Number):
             raise NotImplementedError
         theta = np.asscalar(np.array(K))
-        
+
         den = 1 - self.gamma*(1 + 2*theta + theta**2)
         dePdeK = 2*(theta*self.R/den + self.gamma*(self.Q + theta**2*self.R)*(1+theta)/den**2)
 
