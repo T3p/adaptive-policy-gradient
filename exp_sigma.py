@@ -9,6 +9,9 @@ class Constants(Enum):
     ONLY_THETA = 0
     THETA_AND_SIGMA = 1
     THETA_AND_MIXED = 2
+    LOCAL_STEP_LENGTH = 3
+    FAR_SIGHTED_STEP = 4
+    ONLY_DELTA = 5
 
     def __repr__(self):
         return self.name
@@ -42,13 +45,21 @@ def run_experiment( experiment_type=Constants.ONLY_THETA,
     initial_configuration = np.array([experiment_type.value, theta, sigma, alphaSigma, n_iterations, eps, filename])
     lqg_env = lqg1d.LQG1D()
 
-    # Hyperparameters for LQG
+    #
+    # Compute constants
+    #
     R = np.asscalar(lqg_env.Q*lqg_env.max_pos**2 + lqg_env.R*lqg_env.max_action**2)
     M = lqg_env.max_pos
     gamma = lqg_env.gamma
     volume = 2*lqg_env.max_action
 
-    traj_data = np.zeros((1, 8))
+    traj_data = np.zeros((1, 9))
+
+    c1 = (1 - lqg_env.gamma)**3 * math.sqrt(2 * math.pi)
+    c2 = lqg_env.gamma * math.sqrt(2 * math.pi) * R * M**2
+    c3 = 2*(1 - lqg_env.gamma) * lqg_env.max_action * R * M**2
+
+    m = 1
 
     for t in my_range(n_iterations):
         J = lqg_env.computeJ(theta, sigma)
@@ -57,28 +68,66 @@ def run_experiment( experiment_type=Constants.ONLY_THETA,
         if abs(gradK) <= eps:
             break
 
+        if abs(theta) > 100:
+            print("DIVERGED")
+            break
+
         gradSigma = lqg_env.grad_Sigma(theta, sigma)
         gradMixed = lqg_env.grad_mixed(theta, sigma)
 
         c = computeLoss(R, M, gamma, volume, sigma)
         alpha=1/(2*c)
 
-        if verbose:
-            if t % 100 == 0:
-                print("\nT\t\tTheta\t\tSigma\t\tJ\t\t\tgradK\t\tgradSigma\t\tgradMixed\t\talpha\n")
-            print("{}\t\t{:.5f}\t\t{:.4f}\t\t{:.3E}\t\t{:.3f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4E}".format(t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha))
+        grad_sigma_alpha_star = sigma**2 * (2*c1*c2*sigma + 3*c1*c3) / (m * (c2 * sigma + c3)**2)
+        alphaStar = (c1 * sigma**3) / (m * (2 * c2 * sigma + c3))
+        grad_sigma_norm_grad_theta = 2 * gradK * gradMixed
 
-        if t == 0:
-            traj_data = np.array([t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha])
-        else:
-            traj_data = np.vstack([traj_data, np.array([t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha])])
-
-        theta += alpha * gradK
+        # Compute the gradient for sigma
 
         if experiment_type == Constants.THETA_AND_SIGMA:
-            sigma += alphaSigma * gradSigma
+            updateGradSigma = gradSigma
+
         elif experiment_type == Constants.THETA_AND_MIXED:
-            sigma += alphaSigma * gradMixed
+            gradLowerBound = gradSigma + \
+                             (1/2) * gradK * grad_sigma_alpha_star + \
+                             (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+            updateGradSigma = gradLowerBound
+
+        elif experiment_type == Constants.LOCAL_STEP_LENGTH:
+            gradLowerBound = (1/2) * gradK * grad_sigma_alpha_star
+            updateGradSigma = gradLowerBound
+
+        elif experiment_type == Constants.FAR_SIGHTED_STEP:
+            gradLowerBound = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+            updateGradSigma = gradLowerBound
+
+        elif experiment_type == Constants.ONLY_DELTA:
+            gradLowerBound = (1/2) * gradK * grad_sigma_alpha_star + \
+                             (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+            updateGradSigma = gradLowerBound
+
+        else:
+            updateGradSigma = 0.0
+
+        # Save trajectory data
+
+        if t == 0:
+            traj_data = np.array([t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha, updateGradSigma])
+        else:
+            traj_data = np.vstack([traj_data, np.array([t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha, updateGradSigma])])
+
+        # Display
+        if verbose:
+            if t % 100 == 0:
+                print("\nT\t\tTheta\t\tSigma\t\tJ\t\t\tgradK\t\tgradSigma\t\tgradMixed\t\talpha\t\tupdateGradSigma\n")
+            print("{}\t\t{:.5f}\t\t{:.4f}\t\t{:.3E}\t\t{:.3f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4E}\t\t{:.4f}".format(t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha, updateGradSigma))
+
+        # Update parameters
+
+        theta += alpha * gradK
+        sigma += alphaSigma * updateGradSigma
 
         # Bound the sigma to be always positive
         sigma = max(MIN_SIGMA, sigma)
@@ -88,15 +137,16 @@ def run_experiment( experiment_type=Constants.ONLY_THETA,
         np.save(filename[:-4] + '_params.npy', initial_configuration)
 
 
-    #print("Best theta: {}".format(lqg_env.computeOptimalK()))
-    #print("Difference from optimal theta: {}".format(abs(lqg_env.computeOptimalK() - theta)))
-
 if __name__ == '__main__':
+    # run_experiment(sigma=1, theta=-0.1, alphaSigma=0.01, experiment_type=Constants.LOCAL_STEP_LENGTH)
+    # exit()
+
     params = {
-        'sigma' : [1, 10, 20, 30],
-        'theta' : [-0.1, -0.2, -0.01],
+        'sigma' : [1, 2, 5, 10, 20, 30],
+        'theta' : [-0.1],
         'alphaSigma' : [0.1, 0.01, 0.001, 0.0001],
-        'experiment_type' : [Constants.ONLY_THETA, Constants.THETA_AND_SIGMA, Constants.THETA_AND_MIXED]
+        #'experiment_type' : [Constants.ONLY_THETA, Constants.THETA_AND_SIGMA, Constants.THETA_AND_MIXED, Constants.FAR_SIGHTED_STEP, Constants.LOCAL_STEP_LENGTH]
+        'experiment_type' : [Constants.ONLY_DELTA]
     }
 
     base_folder = 'experiments_sigma'
