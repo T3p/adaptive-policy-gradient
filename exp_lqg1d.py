@@ -68,4 +68,4 @@ if __name__ == '__main__':
     #run(estimator_name = 'gpomdp', meta_selector = VanishingMeta(1e-3,100), parallel = False)
         
     #Adabatch
-    run(meta_selector = MetaOptimizer(), parallel = False)
+    run(meta_selector = MetaOptimizer(bound_name='chebyshev'), parallel = False)

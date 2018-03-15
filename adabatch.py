@@ -67,9 +67,9 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,
 
     #Initial print
     if verbose:
-        print meta_selector
-        print 'Start Experiment'
-        print  
+        print(meta_selector)
+        print('Start Experiment')
+        print()
 
     #Learning 
     iteration = 0
@@ -79,7 +79,7 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,
 
         #Print before
         if verbose:
-            print 'Epoch: ', iteration,  ' N =', N,  ' theta =', pol.get_theta()
+            print('Epoch: ', iteration,  ' N =', N,  ' theta =', pol.get_theta())
             start_time = time.time()
     
         #Collecting experience
@@ -88,10 +88,10 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,
             noises = np.random.normal(0,1,(N,tp.H))
             traces = np.memmap(traces_path,dtype=float,shape=(N,tp.H,pol.feat_dim+pol.act_dim+1),mode='w+')
             Parallel(n_jobs=n_cores)(delayed(__trajectory)\
-                (env,tp,pol,feature_fun,traces,n,initials[n],noises[n]) for n in xrange(N))
+                (env,tp,pol,feature_fun,traces,n,initials[n],noises[n]) for n in range(N))
         else:
             traces = np.zeros((N,tp.H,pol.feat_dim+pol.act_dim+1))
-            for n in xrange(N):
+            for n in range(N):
                 __trajectory(env,tp,pol,feature_fun,traces,n)
         features = traces[:,:,:pol.feat_dim]
         actions = traces[:,:,pol.feat_dim:pol.feat_dim+pol.act_dim]
@@ -112,7 +112,7 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,
         alpha,N,safe = meta_selector.select(pol,g_stats,tp,N_old,iteration)
         N = min(constr.N_max,max(constr.N_min, N))
         if not safe and verbose:
-            print "Unsafe update!"
+            print("Unsafe update!")
 
         #Record [N, alpha, k, J, J^]
         k = g_stats.get_amax()
@@ -123,8 +123,8 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,
         #Check if done
         N_tot+=N
         if N_tot>=constr.N_tot:
-            print 'Total N reached'
-            print 'End experiment'
+            print('Total N reached')
+            print('End experiment')
             break
 
         #Optimization
@@ -133,9 +133,9 @@ def learn(env,tp,pol,feature_fun,constr,grad_estimator,meta_selector,local=True,
 
         #Print after
         if verbose:
-            print 'alpha =', alpha,  ' J =', J,  ' J^ =', J_hat
-            print 'time: ', time.time() - start_time
-            print
+            print('alpha =', alpha,  ' J =', J,  ' J^ =', J_hat)
+            print('time: ', time.time() - start_time)
+            print()
 
         #Manual stop
         signal.signal(signal.SIGINT, signal_handler)
