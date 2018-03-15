@@ -2,6 +2,12 @@ import numpy as np
 import math
 import os
 
+try:
+    import numba
+    NUMBA_PRESENT = True
+except ImportError:
+    NUMBA_PRESENT = False
+
 """Helper functions"""
 
 
@@ -38,3 +44,45 @@ def range_unlimited(r=-1):
     while n != r:
         yield n
         n += 1
+
+
+def calc_K(theta, sigma, gamma, R, Q, max_pos):
+    den = 1 - gamma*(1 + 2*theta + theta**2)
+    dePdeK = 2*(theta*R/den + gamma*(Q + theta**2*R)*(1+theta)/den**2)
+    return - dePdeK*(max_pos**2/3 + gamma*sigma/(1 - gamma))
+
+def calc_P(K, Q, R, gamma):
+    P = (Q + K* R * K) / (1 - gamma * (1 + 2 * K + K**2))
+    return P
+
+
+def calc_J(K, Q, R, gamma, sigma, max_pos, B):
+    P = calc_P(K, Q, R, gamma)
+    W =  (1 / (1 - gamma)) * sigma * (R + gamma * B*P*B)
+
+    return min(0,-max_pos**2*P/3 - W)
+
+
+def calc_sigma(K, Q, R, gamma):
+    P = calc_P(K, Q, R, gamma)
+    return -(R + gamma*P)/(1 - gamma)
+
+
+def calc_mixed(gamma, theta, R, Q):
+    den = 1 - gamma*(1 + 2*theta + theta**2)
+    dePdeK = 2*(theta*R/den + gamma*(Q + theta**2*R)*(1+theta)/den**2)
+
+    return -dePdeK*gamma/(1 - gamma)
+
+
+
+#
+#   COMPILE IF NUMBA IS PRESENT
+#
+
+if NUMBA_PRESENT:
+    calc_K = numba.jit(calc_K, nopython=True)
+    calc_P = numba.jit(calc_P, nopython=True)
+    calc_J = numba.jit(calc_J, nopython=True)
+    calc_sigma = numba.jit(calc_sigma, nopython=True)
+    calc_mixed = numba.jit(calc_mixed, nopython=True)

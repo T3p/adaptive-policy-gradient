@@ -4,25 +4,42 @@ import numpy as np
 import math
 import itertools
 import os
-
+import utils
 from utils import range_unlimited, maybe_make_dir
+
+try:
+    import numba
+    NUMBA_PRESENT = True
+except ImportError:
+    NUMBA_PRESENT = False
 
 
 MIN_SIGMA = 0.1
 MAX_SIGMA = 30
 
-class Constants(Enum):
-    ONLY_THETA = 0
-    THETA_AND_SIGMA = 1
-    THETA_AND_MIXED = 2
-    LOCAL_STEP_LENGTH = 3
-    FAR_SIGHTED_STEP = 4
-    ONLY_DELTA = 5
+SIGMA_ITERATIONS = 1000000
+SIGMA_EPS = 1e-03
 
-    def __repr__(self):
-        return self.name
-    def __str__(self):
-        return self.name
+
+lqg_env = lqg1d.LQG1D()
+
+#
+# Compute constants
+#
+R = np.asscalar(lqg_env.Q*lqg_env.max_pos**2 + lqg_env.R*lqg_env.max_action**2)
+M = lqg_env.max_pos
+gamma = lqg_env.gamma
+volume = 2*lqg_env.max_action
+
+ENV_R = np.asscalar(lqg_env.R)
+ENV_Q = np.asscalar(lqg_env.Q)
+ENV_B = np.asscalar(lqg_env.B)
+
+c1 = (1 - lqg_env.gamma)**3 * math.sqrt(2 * math.pi)
+c2 = lqg_env.gamma * math.sqrt(2 * math.pi) * R * M**2
+c3 = 2*(1 - lqg_env.gamma) * lqg_env.max_action * R * M**2
+
+m = 1
 
 
 class SigmaFunction(object):
@@ -91,6 +108,48 @@ def computeLoss(R, M, gamma, volume, sigma):
             float(gamma)/(2*(1-gamma)))
 
 
+def computeLossSigma(R, M, gamma, volume, sigma):
+    c = (4*(math.sqrt(7) - 2)*math.exp((math.sqrt(7))/(2) - 2)) / (math.sqrt(2*math.pi))
+    return R/((1-gamma)**2 *sigma) * ((c*volume) / (2) + (gamma) / ((1-gamma)*sigma))
+
+
+def get_gradient_sigma(theta, sigma, lambda_coeff, gamma, R, Q, max_pos):
+    gradK = utils.calc_K(theta, sigma, gamma, R, Q, max_pos)
+    #gradSigma = lqg_env.grad_Sigma(theta, sigma)
+    gradSigma = utils.calc_sigma(theta, Q, R, gamma)
+
+    #gradMixed = lqg_env.grad_mixed(theta, sigma)
+    gradMixed = utils.calc_mixed(gamma, theta, R, Q)
+
+    grad_sigma_alpha_star = sigma**2 * (2*c1*c2*sigma + 3*c1*c3) / (m * (c2 * sigma + c3)**2)
+    alphaStar = (c1 * sigma**3) / (m * (2 * c2 * sigma + c3))
+    grad_sigma_norm_grad_theta = 2 * gradK * gradMixed
+
+    # Compute the gradient for sigma
+    grad_local_step = (1/2) * gradK**2 * grad_sigma_alpha_star
+    grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+    gradDelta = grad_local_step + grad_far_sighted
+
+    updateGradSigma = lambda_coeff * gradSigma + (1 - lambda_coeff)*gradDelta
+
+    return updateGradSigma,gradK,gradSigma,gradMixed
+
+
+
+
+
+#
+#    COMPILE FUNCTIONS IF NUMBA IS PRESENT
+#
+if NUMBA_PRESENT:
+    computeLoss = numba.jit(computeLoss)
+    computeLossSigma = numba.jit(computeLossSigma)
+    get_gradient_sigma = numba.jit(get_gradient_sigma)
+
+
+
+
 def run_experiment( lambda_coeff = 0.1,
                     theta=-0.1,
                     sigma_fun=Identity(1),
@@ -98,66 +157,42 @@ def run_experiment( lambda_coeff = 0.1,
                     n_iterations=-1,
                     eps=1e-01,
                     filename=None,
-                    verbose=True):
+                    verbose=True,
+                    two_steps=False):
     initial_configuration = np.array([lambda_coeff, theta, str(sigma_fun), alphaSigma, n_iterations, eps, filename])
-    lqg_env = lqg1d.LQG1D()
+
 
     sigma_fun.reset()
     sigma = sigma_fun.eval()
 
-    #
-    # Compute constants
-    #
-    R = np.asscalar(lqg_env.Q*lqg_env.max_pos**2 + lqg_env.R*lqg_env.max_action**2)
-    M = lqg_env.max_pos
-    gamma = lqg_env.gamma
-    volume = 2*lqg_env.max_action
-
-    traj_data = np.zeros((1, 9))
-
-    c1 = (1 - lqg_env.gamma)**3 * math.sqrt(2 * math.pi)
-    c2 = lqg_env.gamma * math.sqrt(2 * math.pi) * R * M**2
-    c3 = 2*(1 - lqg_env.gamma) * lqg_env.max_action * R * M**2
-
-    m = 1
+    traj_data = np.zeros((max(n_iterations, 50000), 9))
 
     for t in range_unlimited(n_iterations):
         sigma = sigma_fun.eval()
 
-        J = lqg_env.computeJ(theta, sigma)
+        J = utils.calc_J(theta, ENV_Q, ENV_R, lqg_env.gamma, sigma, lqg_env.max_pos, ENV_B)
 
-        gradK = lqg_env.grad_K(theta, sigma)
-        if abs(gradK) <= eps:
-            break
-
-        if abs(theta) > 100:
-            print("DIVERGED")
-            break
-
-        gradSigma = lqg_env.grad_Sigma(theta, sigma)
-        gradMixed = lqg_env.grad_mixed(theta, sigma)
+        # Get the gradients
+        updateGradSigma, gradK, gradSigma, gradMixed = get_gradient_sigma(theta, sigma, lambda_coeff, lqg_env.gamma, ENV_R, ENV_Q, lqg_env.max_pos)
 
         c = computeLoss(R, M, gamma, volume, sigma)
         alpha=1/(2*c)
 
-        grad_sigma_alpha_star = sigma**2 * (2*c1*c2*sigma + 3*c1*c3) / (m * (c2 * sigma + c3)**2)
-        alphaStar = (c1 * sigma**3) / (m * (2 * c2 * sigma + c3))
-        grad_sigma_norm_grad_theta = 2 * gradK * gradMixed
+        # Early stopping if converged or diverged
+        if abs(gradK) <= eps:
+            break
+        if abs(theta) > 100:
+            print("DIVERGED")
+            break
 
-        # Compute the gradient for sigma
-        grad_local_step = (1/2) * gradK * grad_sigma_alpha_star
-        grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
-
-        gradDelta = grad_local_step + grad_far_sighted
-
-        updateGradSigma = lambda_coeff * gradSigma + (1 - lambda_coeff)*gradDelta
 
         # Save trajectory data
 
-        if t == 0:
-            traj_data = np.array([t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha, updateGradSigma])
-        else:
-            traj_data = np.vstack([traj_data, np.array([t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha, updateGradSigma])])
+        if t >= traj_data.shape[0]:
+            traj_data = np.append(traj_data, np.zeros((50000, 9)),0)
+
+        traj_data[t] = np.array([t, theta, sigma, J, gradK, gradSigma, gradMixed, alpha, updateGradSigma])
+
 
         # Display
         if verbose:
@@ -168,11 +203,23 @@ def run_experiment( lambda_coeff = 0.1,
         # Update parameters
 
         theta += alpha * gradK
-        sigma_fun.update(alphaSigma, updateGradSigma)
+
+        # How to update the sigma
+        if two_steps:
+            sigma = sigma_fun.eval()
+
+            sigma_vect = np.linspace(MIN_SIGMA, MAX_SIGMA, 1000)
+            grads = [get_gradient_sigma(theta, s, lambda_coeff, lqg_env.gamma, ENV_R, ENV_Q, lqg_env.max_pos)[0] for s in sigma_vect]
+
+            new_sigma = sigma_vect[np.abs(grads).argmin()]
+
+            sigma_fun.update(1, new_sigma - sigma)
+        else:
+            sigma_fun.update(alphaSigma, updateGradSigma)
 
 
     if filename is not None:
-        np.save(filename, traj_data)
+        np.save(filename, traj_data[:t])
         np.save(filename[:-4] + '_params.npy', initial_configuration)
 
 
@@ -182,26 +229,30 @@ def run_multiple_experiments(params, base_folder, num_iterations=10000):
     for param in itertools.product(*params.values()):
         param_dict = dict(zip(params.keys(), param))
 
-        print("Sigma: {sigma_fun}, Theta: {theta}, alphaSigma: {alphaSigma}, lambda_coeff: {lambda_coeff}".format(**param_dict))
-
-        filename = os.path.join(base_folder, "exp_{sigma_fun}_{theta}_{alphaSigma}_{lambda_coeff}.npy".format(**param_dict))
+        if 'two_steps' in param_dict:
+            print("Sigma: {sigma_fun}, Theta: {theta}, alphaSigma: {alphaSigma}, lambda_coeff: {lambda_coeff} two steps".format(**param_dict))
+            filename = os.path.join(base_folder, "exp_{sigma_fun}_{theta}_{alphaSigma}_{lambda_coeff}_two_steps.npy".format(**param_dict))
+        else:
+            print("Sigma: {sigma_fun}, Theta: {theta}, alphaSigma: {alphaSigma}, lambda_coeff: {lambda_coeff}".format(**param_dict))
+            filename = os.path.join(base_folder, "exp_{sigma_fun}_{theta}_{alphaSigma}_{lambda_coeff}.npy".format(**param_dict))
 
         run_experiment(**param_dict, filename=filename, verbose=False, n_iterations=num_iterations)
 
 if __name__ == '__main__':
-    # l = Identity(1)
-    # run_experiment(sigma_fun=l, theta=-0.1, alphaSigma=0.01, lambda_coeff=0.000001, n_iterations=100000, verbose=True)
-    # exit()
+    l = Identity(1)
+    run_experiment(sigma_fun=l, theta=-0.1, alphaSigma=0.00002, lambda_coeff=0.00005, n_iterations=100000, verbose=False, two_steps=False)
+    exit()
 
     params = {
-        #'sigma_fun' : [Identity(x) for x in [1, 2, 3]] + [Exponential(x) for x in [0, 0.1]],
-        'sigma_fun' : [Exponential(0), Identity(1)],
+        #'sigma_fun' : [Exponential(0), Identity(1)],
+        'sigma_fun' : [Identity(1), Exponential(0)],
         'theta' : [-0.1],
-        'alphaSigma' : [0], #[0.005, 0.01, 0.001, 0.0005, 0.02],
+        'alphaSigma' : [0, 0.005, 0.01, 0.001, 0.0005, 0.02],
+        #'alphaSigma' : [1],
         'lambda_coeff' : [0, 0.000001, 0.00001, 0.000005, 1]
-        #'experiment_type' : [Constants.ONLY_THETA, Constants.THETA_AND_SIGMA, Constants.ONLY_DELTA]
+        #,'two_steps' : [True]
     }
 
-    base_folder = 'experiments_sigma3'
+    base_folder = 'experiments_sigma_lambda2'
 
     run_multiple_experiments(params, base_folder, 100000)
