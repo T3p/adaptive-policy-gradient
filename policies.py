@@ -25,7 +25,7 @@ class GaussPolicy:
         theta = np.atleast_1d(theta)
         self.param_len = theta.size
         assert np.size(theta)%d==0
-        self.feat_dim = m = np.size(theta)/d
+        self.feat_dim = m = np.size(theta)//d
         self.theta_mat = np.reshape(theta,(d,m)).astype(float)
     
     def get_theta(self):

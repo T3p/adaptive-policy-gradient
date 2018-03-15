@@ -39,7 +39,7 @@ class LQG1D(gym.Env):
     def __init__(self, discrete_reward=False):
         self.horizon = 20
         self.gamma = 0.99
-        self.sigma_controller = 1
+        self.sigma_controller = 1.
         self.discrete_reward = discrete_reward
         self.max_pos = 4.0
         self.max_action = 4.0
