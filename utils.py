@@ -46,6 +46,12 @@ def range_unlimited(r=-1):
         n += 1
 
 
+#
+#   LQG SCALAR SPECIFIC FUNCTIONS
+#
+
+
+
 def calc_K(theta, sigma, gamma, R, Q, max_pos):
     den = 1 - gamma*(1 + 2*theta + theta**2)
     dePdeK = 2*(theta*R/den + gamma*(Q + theta**2*R)*(1+theta)/den**2)
@@ -74,15 +80,25 @@ def calc_mixed(gamma, theta, R, Q):
 
     return -dePdeK*gamma/(1 - gamma)
 
+def computeLoss(R, M, gamma, volume, sigma):
+    return float(R*M**2)/((1-gamma)**2*sigma**2)* \
+        (float(volume)/math.sqrt(2*math.pi*sigma**2) + \
+            float(gamma)/(2*(1-gamma)))
 
+
+def computeLossSigma(R, M, gamma, volume, sigma):
+    c = (4*(math.sqrt(7) - 2)*math.exp((math.sqrt(7))/(2) - 2)) / (math.sqrt(2*math.pi))
+    return R/((1-gamma)**2 *sigma) * ((c*volume) / (2) + (gamma) / ((1-gamma)*sigma))
 
 #
 #   COMPILE IF NUMBA IS PRESENT
 #
 
 if NUMBA_PRESENT:
-    calc_K = numba.jit(calc_K, nopython=True)
-    calc_P = numba.jit(calc_P, nopython=True)
-    calc_J = numba.jit(calc_J, nopython=True)
-    calc_sigma = numba.jit(calc_sigma, nopython=True)
-    calc_mixed = numba.jit(calc_mixed, nopython=True)
+    calc_K = numba.jit(calc_K)
+    calc_P = numba.jit(calc_P)
+    calc_J = numba.jit(calc_J)
+    calc_sigma = numba.jit(calc_sigma)
+    calc_mixed = numba.jit(calc_mixed)
+    computeLoss = numba.jit(computeLoss)
+    computeLossSigma = numba.jit(computeLossSigma)
