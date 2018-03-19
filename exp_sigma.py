@@ -34,12 +34,17 @@ OPTIMAL_K = np.asscalar(LQG_ENV.computeOptimalK())
 
 
 class SigmaFunction(object):
+    """This is an abstract function with one parameter, used to update parameter sigma
+    """
     def __init__(self, param, initial_param):
         self.param = param
         self.initial_param = param if initial_param is None else param
         self.description = 'sigma'
 
+
     def update(self, step_size, gradient_sigma):
+        """Performs the update x <- x + step_size * gradient_sigma
+        """
         raise NotImplemented('Function not implemented')
 
     def eval(self):
@@ -50,6 +55,8 @@ class SigmaFunction(object):
 
 
 class Identity(SigmaFunction):
+    """Implements function f(x) = x
+    """
     def __init__(self, param, initial_param = None):
         super().__init__(param, initial_param)
         self.description = str(param if initial_param is None else param)
@@ -64,6 +71,8 @@ class Identity(SigmaFunction):
         return self.param
 
 class Fixed(SigmaFunction):
+    """Implements a constant function
+    """
     def __init__(self, param, initial_param = None):
         super().__init__(param, initial_param)
         self.description = 'F' + str(param if initial_param is None else param)
@@ -75,12 +84,14 @@ class Fixed(SigmaFunction):
         return self.param
 
 class Exponential(SigmaFunction):
+    """Implements function f(x) = e^x
+    """
     def __init__(self, param, initial_param=None):
         super().__init__(param, initial_param)
         self.description = 'e(' + str(param if initial_param is None else param) + ')'
 
     def update(self, step_size, gradient_sigma):
-        new_param = self.param + step_size * gradient_sigma * math.exp(self.param)
+        new_param = self.param + step_size * gradient_sigma #* math.exp(self.param)
         new_param = min(new_param, math.log(MAX_SIGMA))
         new_param = max(new_param, math.log(MIN_SIGMA))
 
@@ -95,8 +106,11 @@ class Exponential(SigmaFunction):
 
 
 class Experiment(object):
-    def __init__(self, lqg_environment):
+    """Defines an experiment, with possibly different update rules
+    """
+    def __init__(self, lqg_environment, exp_name = None):
         self.lqg_environment = lqg_environment
+        self.exp_name = exp_name
 
         #   Store data for logging
         self.t = 0
@@ -132,9 +146,14 @@ class Experiment(object):
 
 
     def on_sigma_update(self, current_theta, current_sigma_fun):
+        """Perform an update on sigma
+        """
         return current_sigma_fun
 
+
     def on_theta_update(self, theta, sigma_fun):
+        """Perform an update on theta
+        """
         sigma = sigma_fun.eval()
 
         c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
@@ -142,15 +161,22 @@ class Experiment(object):
 
         return theta + alpha*self.gradK
 
+
     def on_before_update(self, current_theta, current_sigma_fun):
+        """Compute gradients, log data
+        """
         # Compute the gradients
         current_sigma = current_sigma_fun.eval()
 
         self.J = utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, current_sigma, self.M, self.ENV_B)
         self.gradK = utils.calc_K(current_theta, current_sigma, self.ENV_GAMMA, self.ENV_R, self.ENV_Q, self.M)
         self.gradSigma = utils.calc_sigma(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA)
+
+        self.gradW = self.gradSigma * math.exp(current_sigma_fun.param)
+
         self.gradMixed = utils.calc_mixed(self.ENV_GAMMA, current_theta, self.ENV_R, self.ENV_Q)
 
+        self.gradMixedW = self.gradMixed * math.exp(current_sigma_fun.param)
         # Save trajectory data
 
         if self.t >= self.num_rows:
@@ -173,7 +199,10 @@ class Experiment(object):
     def on_after_update(self, current_theta, current_sigma_fun):
         self.t += 1
 
+
     def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
         return np.hstack([  np.arange(0, self.num_rows).reshape(-1,1),
                             self.J_data.reshape(-1,1),
                             self.theta_data.reshape(-1,1),
@@ -182,7 +211,10 @@ class Experiment(object):
                             self.gradSigma_data.reshape(-1,1),
                             self.gradMixed_data.reshape(-1,1)])
 
+
     def get_param_list(self, params):
+        """Returns a dictionary containing all the data related to an experiment
+        """
         try:
             params['experiment'] = str(params['self'])
             del params['self']
@@ -190,15 +222,17 @@ class Experiment(object):
             pass
         return params
 
+
     def run(self,
             theta=-0.1,
-            sigma_fun=Identity(1),
+            sigma_fun=Exponential(0),
             n_iterations=-1,
             eps=1e-03,
             filename=None,
             verbose=True,
             two_steps=True):
-
+        """Runs the experiment.
+        """
         initial_configuration = self.get_param_list(locals())
 
         for t in range_unlimited(n_iterations):
@@ -245,21 +279,34 @@ class Experiment(object):
             #np.save(filename[:-4] + '_params.npy', initial_configuration)
 
     def __str__(self):
-        return "Experiment()"
+        if self.exp_name is None:
+            return self.__class__.__name__
+        else:
+            return self.exp_name
 
-class LambdaExperiment(Experiment):
-    def __init__(self, lqg_environment, alphaSigma, lambda_coeff):
-        super().__init__(lqg_environment)
+class ExpLambda(Experiment):
+    """This implements: σ <- σ + α[λ * ∇σJ + (1 -λ) * ∇σΔJ]
+    """
+    def __init__(self, lqg_environment, alphaSigma, lambda_coeff, exp_name = None):
+        super().__init__(lqg_environment, exp_name)
         self.alphaSigma = alphaSigma
         self.lambda_coeff = lambda_coeff
 
     def on_sigma_update(self, theta, sigma_fun):
+        """This implements: σ <- σ + α[λ * ∇σJ + (1 -λ) * ∇σΔJ]
+        """
         sigma = sigma_fun.eval()
         updateGradSigma = self._get_gradient_sigma(theta, sigma)
 
-        return sigma_fun.update(self.alphaSigma, updateGradSigma)
+        if isinstance(sigma_fun, Exponential):
+            updateGradW = updateGradSigma * math.exp(sigma_fun.param)  # Computes the gradient wrt w
+            return sigma_fun.update(self.alphaSigma, updateGradW)
+        else:
+            return sigma_fun.update(self.alphaSigma, updateGradSigma)
 
     def _get_gradient_sigma(self, theta, sigma):
+        """Evaluates: λ * ∇σJ + (1 -λ) * ∇σΔJ
+        """
         grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
         alphaStar = (self.C1 * sigma**3) / (self.m * (2 * self.C2 * sigma + self.C3))
         grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
@@ -281,37 +328,91 @@ class LambdaExperiment(Experiment):
 
         return ret_params
 
-    def __str__(self):
-        return "Lambda"
 
-
-class SigmaTwoStep(Experiment):   # ULTRASAFE
+class ExpSigmaTwoStep(Experiment):   # ULTRASAFE
+    """This implements 2-step update using the gradient on theta and on sigma
+    """
     def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)  # The bound only works if sigma is exponential
+
         sigma = sigma_fun.eval()
 
         c_sigma = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
         alpha_sigma = 1/(2 * c_sigma)
 
-        return sigma_fun.update(alpha_sigma, self.gradSigma)
+        return sigma_fun.update(alpha_sigma, self.gradW)
 
-    def __str__(self):
-        return "SigmaTwoSteps"
-
-class Exp4(Experiment):
+class ExpArgmaxExact(Experiment):
+    """This experiment performs w <- w + b * ∇w J
+        where w = argmax { Δ_w J(θ,w) + Δ_θ J(θ,w') }
+    """
     def on_sigma_update(self, theta, sigma_fun):
-        beta = np.linspace(-0.5, 0.5, 10000)
+        assert isinstance(sigma_fun, Exponential)
+
+        MIN_STEP = -0.001
+        MAX_STEP = 0.001
+        STEP_COUNT = 100
+
         sigma = sigma_fun.eval()
-
         d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
-
         c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
         a_star=1/(2*c)
 
-        values = np.array([(b - b**2 * d)*self.gradSigma**2 + 0.5*100*(1/(2*(utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma+b*self.gradSigma))))*utils.calc_K(theta, sigma + b*self.gradSigma, self.ENV_GAMMA, self.ENV_R, self.ENV_Q, self.M)**2 for b in beta])
+        # Perform a linear search
+        beta = np.linspace(MIN_STEP, MAX_STEP, STEP_COUNT)
+
+        values = np.zeros(beta.shape[0])
+        for t in range(values.shape[0]):
+            b = beta[t]
+            new_sigma = (sigma_fun.update(b, self.gradW)).eval() # == math.exp(sigma_fun.param + b*self.gradW)
+            new_c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, new_sigma)
+            a_star = 1/(2 * new_c)
+
+            gradK_squared = utils.calc_K(theta, new_sigma, self.ENV_GAMMA, self.ENV_R, self.ENV_Q, self.M)**2
+
+            term1 = (b - d * b**2)*self.gradW**2    # Δ_w J(θ,w)
+            term2 = 0.5*a_star * gradK_squared      # Δ_θ J(θ,w')
+            values[t] = term1 + term2
 
         idx = np.argmax(values)
 
-        return sigma_fun.update(beta[idx], self.gradSigma)
+        return sigma_fun.update(beta[idx], self.gradW)
+
+class ExpSafeConstraint(Experiment):
+    """This experiment optimizes a function with a safe constraint on the step size of w
+    """
+    def on_theta_update(self, theta, sigma_fun):
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        alpha=1/(2*c)
+
+        self.perf_improvement = (1/2) * alpha * self.gradK**2
+
+        return theta + alpha*self.gradK
+
+
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        a_star=1/(2*c)
+
+        max_improvement = self.perf_improvement
+
+        low = (1 - math.sqrt(1 - (4 * d * (-max_improvement))/(self.gradW**2))) / (2 * d)
+        high = (1 + math.sqrt(1 - (4 * d * (-max_improvement))/(self.gradW**2))) / (2 * d)
+
+
+        #grad = np.clip(gradDelta, low, high)
+        step = low
+
+        return sigma_fun.update(step, self.gradW)
 
 def generate_filename():
     return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(15))
@@ -324,37 +425,42 @@ if __name__ == '__main__':
     # #run_experiment(sigma_fun=l, theta=-0.1, alphaSigma=0.00002, lambda_coeff=0.00005, n_iterations=100000, verbose=False, two_steps=False)
     # exit()
 
-    BASE_FOLDER = 'experiments_lambda_new'
+    BASE_FOLDER = 'experiments_new'
     maybe_make_dir(BASE_FOLDER)
 
-    N_ITERATIONS = 100000
+    N_ITERATIONS = 200000
     EPS = 1e-03
     INIT_THETA = -0.1
 
 
     #
-    #   RUN EXP 4
+    #   RUN ALL STANDALONE EXPERIMENTS
     #
 
-    filename = os.path.join(BASE_FOLDER, generate_filename()) + '.npy'
-    exp4 = Exp4(LQG_ENV)
-    print("Running experiment Exp4")
-    exp4.run(  theta=INIT_THETA,
+    experiments = [ExpSigmaTwoStep, ExpArgmaxExact, ExpSafeConstraint]
+    exp_names = ["ExpSigmaTwoStep", "ExpArgmaxExact", "ExpSafeConstraint"]
+
+    for exp_class,name in zip(experiments, exp_names):
+        for v,count_step in zip([False, True], ["one_step", "two_steps"]):
+            print("Running experiment: {}_{}".format(name, count_step))
+            filename = os.path.join(BASE_FOLDER, generate_filename()) + '.npy'
+
+            exp = exp_class(LQG_ENV, exp_name="%s_%s" % (name, count_step))
+
+            exp.run(    theta=INIT_THETA,
                         sigma_fun=Exponential(0),
                         n_iterations=N_ITERATIONS,
                         eps=EPS,
-                        filename=None,
-                        verbose=True,
-                        two_steps=True)
-
-    exit()
+                        filename=filename,
+                        verbose=False,
+                        two_steps=v)
 
     #
     #   RUN LAMBDA EXPERIMENTS
     #
 
 
-    lambda_experiments = [LambdaExperiment(LQG_ENV, alphaSigma, lambda_coeff) \
+    lambda_experiments = [ExpLambda(LQG_ENV, alphaSigma, lambda_coeff) \
                     for alphaSigma in [0, 0.005, 0.01, 0.001, 0.0005, 0.02] \
                     for lambda_coeff in [0, 0.000001, 0.00001, 0.000005, 1]]
 
@@ -368,18 +474,3 @@ if __name__ == '__main__':
                 filename=filename,
                 verbose=False,
                 two_steps=False)
-
-    #
-    #   RUN SIGMA TWO STEPS
-    #
-
-    filename = os.path.join(BASE_FOLDER, generate_filename()) + '.npy'
-    sigmaTwoSteps = SigmaTwoStep(LQG_ENV)
-    print("Running experiment SigmaTwoSteps")
-    sigmaTwoSteps.run(  theta=INIT_THETA,
-                        sigma_fun=Exponential(0),
-                        n_iterations=N_ITERATIONS,
-                        eps=EPS,
-                        filename=filename,
-                        verbose=False,
-                        two_steps=False)

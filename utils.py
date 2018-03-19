@@ -86,9 +86,13 @@ def computeLoss(R, M, gamma, volume, sigma):
             float(gamma)/(2*(1-gamma)))
 
 
-def computeLossSigma(R, M, gamma, volume, sigma):
+def computeLossSigma_old(R, M, gamma, volume, sigma):
     c = (4*(math.sqrt(7) - 2)*math.exp((math.sqrt(7))/(2) - 2)) / (math.sqrt(2*math.pi))
     return R/((1-gamma)**2 *sigma) * ((c*volume) / (2) + (gamma) / ((1-gamma)*sigma))
+
+def computeLossSigma(R, M, gamma, volume, sigma):
+    c = (4*(math.sqrt(7) - 2)*math.exp((math.sqrt(7))/(2) - 2)) / (math.sqrt(2*math.pi))
+    return R/((1-gamma)**2) * ((c*volume) / (2*sigma) + (gamma) / ((1-gamma)))
 
 #
 #   COMPILE IF NUMBA IS PRESENT
