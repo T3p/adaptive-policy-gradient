@@ -23,11 +23,14 @@ References
 
 
 #classic_control
-from gym.envs.registration import register
-register(
-    id='LQG1D-v0',
-    entry_point='lqg1d:LQG1D'
-)
+from gym.envs.registration import register, spec
+try:
+    spec('LQG1D-v0')
+except:
+    register(
+        id='LQG1D-v0',
+        entry_point='lqg1d:LQG1D'
+    )
 
 
 class LQG1D(gym.Env):
