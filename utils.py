@@ -68,6 +68,9 @@ def calc_J(K, Q, R, gamma, sigma, max_pos, B):
 
     return min(0,-max_pos**2*P/3 - W)
 
+def calc_optimal_sigma(K, Q, R, gamma, B, exp_cost):
+    P = calc_P(K, Q, R, gamma)
+    return (exp_cost * (1 - gamma)) / (R + gamma*B*P*B)
 
 def calc_sigma(K, Q, R, gamma):
     P = calc_P(K, Q, R, gamma)
@@ -106,3 +109,4 @@ if NUMBA_PRESENT:
     calc_mixed = numba.jit(calc_mixed)
     computeLoss = numba.jit(computeLoss)
     computeLossSigma = numba.jit(computeLossSigma)
+    calc_optimal_sigma = numba.jit(calc_optimal_sigma)

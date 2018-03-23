@@ -18,7 +18,7 @@ except ImportError:
     NUMBA_PRESENT = False
 
 
-MIN_SIGMA = 0.1
+MIN_SIGMA = 0.01
 MAX_SIGMA = 30
 
 SIGMA_ITERATIONS = 1000000
@@ -106,6 +106,12 @@ class Exponential(SigmaFunction):
         return self.description
 
 
+
+
+
+
+
+
 class Experiment(object):
     """Defines an experiment, with possibly different update rules
     """
@@ -117,6 +123,7 @@ class Experiment(object):
         self.t = 0
         self.UPDATE_DIM = 10000
         self.num_rows = self.UPDATE_DIM
+        self.num_updates = 0
 
         self.J_data = np.zeros(self.UPDATE_DIM)
         self.theta_data = np.zeros(self.UPDATE_DIM)
@@ -124,7 +131,7 @@ class Experiment(object):
         self.grad_K_data = np.zeros(self.UPDATE_DIM)
         self.gradSigma_data = np.zeros(self.UPDATE_DIM)
         self.gradMixed_data = np.zeros(self.UPDATE_DIM)
-
+        self.exploration_data = np.zeros(self.UPDATE_DIM)
         #
         #   COMPUTE CONSTANTS RELATED TO LQG_ENVIRONMENT
         #
@@ -178,40 +185,48 @@ class Experiment(object):
         self.gradMixed = utils.calc_mixed(self.ENV_GAMMA, current_theta, self.ENV_R, self.ENV_Q)
 
         self.gradMixedW = self.gradMixed * math.exp(current_sigma_fun.param)
+
         # Save trajectory data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.num_rows:
+                self.J_data = np.concatenate([self.J_data, np.zeros(self.UPDATE_DIM)])
+                self.theta_data = np.concatenate([self.theta_data, np.zeros(self.UPDATE_DIM)])
+                self.sigma_data = np.concatenate([self.sigma_data, np.zeros(self.UPDATE_DIM)])
+                self.grad_K_data = np.concatenate([self.grad_K_data, np.zeros(self.UPDATE_DIM)])
+                self.gradSigma_data = np.concatenate([self.gradSigma_data, np.zeros(self.UPDATE_DIM)])
+                self.gradMixed_data = np.concatenate([self.gradMixed_data, np.zeros(self.UPDATE_DIM)])
+                self.exploration_data = np.concatenate([self.exploration_data, np.zeros(self.UPDATE_DIM)])
 
-        if self.t >= self.num_rows:
-            self.J_data = np.concatenate([self.J_data, np.zeros(self.UPDATE_DIM)])
-            self.theta_data = np.concatenate([self.theta_data, np.zeros(self.UPDATE_DIM)])
-            self.sigma_data = np.concatenate([self.sigma_data, np.zeros(self.UPDATE_DIM)])
-            self.grad_K_data = np.concatenate([self.grad_K_data, np.zeros(self.UPDATE_DIM)])
-            self.gradSigma_data = np.concatenate([self.gradSigma_data, np.zeros(self.UPDATE_DIM)])
-            self.gradMixed_data = np.concatenate([self.gradMixed_data, np.zeros(self.UPDATE_DIM)])
+                self.num_rows += self.UPDATE_DIM
 
-            self.num_rows += self.UPDATE_DIM
-
-        self.J_data[self.t] = self.J
-        self.theta_data[self.t] = current_theta
-        self.sigma_data[self.t] = current_sigma
-        self.grad_K_data[self.t] = self.gradK
-        self.gradSigma_data[self.t] = self.gradSigma
-        self.gradMixed_data[self.t] = self.gradMixed
+            self.J_data[self.num_updates] = self.J
+            self.theta_data[self.num_updates] = current_theta
+            self.sigma_data[self.num_updates] = current_sigma
+            self.grad_K_data[self.num_updates] = self.gradK
+            self.gradSigma_data[self.num_updates] = self.gradSigma
+            self.gradMixed_data[self.num_updates] = self.gradMixed
+            performance_deterministic = utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+            self.exploration_data[self.num_updates] = performance_deterministic - self.J
 
     def on_after_update(self, current_theta, current_sigma_fun):
+        if self.t % self.downsample == 0:
+            self.num_updates += 1
+
         self.t += 1
 
 
     def get_traj_data(self):
         """Returns a tuple containing data matrix and a vector of column description
         """
-        data = np.hstack([  np.arange(0, self.num_rows).reshape(-1,1),
-                            self.J_data.reshape(-1,1),
-                            self.theta_data.reshape(-1,1),
-                            self.sigma_data.reshape(-1,1),
-                            self.grad_K_data.reshape(-1,1),
-                            self.gradSigma_data.reshape(-1,1),
-                            self.gradMixed_data.reshape(-1,1)])
-        columns = ['T', 'J', 'THETA', 'SIGMA', 'GRAD_K', 'GRAD_SIGMA', 'GRAD_MIXED']
+        data = np.hstack([  np.arange(0, self.t, self.downsample).reshape(-1,1),
+                            self.J_data[:self.num_updates].reshape(-1,1),
+                            self.theta_data[:self.num_updates].reshape(-1,1),
+                            self.sigma_data[:self.num_updates].reshape(-1,1),
+                            self.grad_K_data[:self.num_updates].reshape(-1,1),
+                            self.gradSigma_data[:self.num_updates].reshape(-1,1),
+                            self.gradMixed_data[:self.num_updates].reshape(-1,1),
+                            self.exploration_data[:self.num_updates].reshape(-1, 1)])
+        columns = ['T', 'J', 'THETA', 'SIGMA', 'GRAD_K', 'GRAD_SIGMA', 'GRAD_MIXED', 'EXPLORATION']
         return data, columns
 
 
@@ -233,14 +248,17 @@ class Experiment(object):
             eps=1e-03,
             filename=None,
             verbose=True,
-            two_steps=True):
+            two_steps=True,
+            downsample=1):
         """Runs the experiment.
         """
         initial_configuration = self.get_param_list(locals())
+        self.downsample = downsample
 
         for t in range_unlimited(n_iterations):
+            sigma = sigma_fun.eval()
             # Early stopping if converged or diverged
-            if abs(OPTIMAL_K - theta) <= eps:
+            if abs(OPTIMAL_K - theta) <= eps and abs(sigma) <= MIN_SIGMA:
                 break
             if abs(theta) > 10:
                 print("DIVERGED")
@@ -278,7 +296,7 @@ class Experiment(object):
             traj_data, columns = self.get_traj_data()
 
             traj_df = pd.DataFrame(traj_data, columns=columns)
-            traj_df.to_pickle(filename + '.bz2')
+            traj_df.to_pickle(filename + '.gzip')
 
             with open(filename + '_params.json', 'w') as f:
                 json.dump({a:str(b) for a,b in initial_configuration.items()}, f)
@@ -358,6 +376,8 @@ class ExpArgmaxExact(Experiment):
         MAX_STEP = 0.001
         STEP_COUNT = 100
 
+        # scipy.optimize
+
         sigma = sigma_fun.eval()
         d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
         c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
@@ -414,7 +434,7 @@ class ExpArgmaxTaylor(Experiment):
         grad_w_bound = gradDelta * math.exp(sigma_fun.param)
         #beta_star = 1/(2*d) * (1 + (self.gradMixedW) / (self.gradW))
         beta_star = 1/(2*d) * (1 + (grad_w_bound) / (self.gradW))
-        print("beta_star: {}, grad_w_bound/gradW: {}".format(beta_star, (grad_w_bound) / (self.gradW)))
+        #print("beta_star: {}, grad_w_bound/gradW: {}".format(beta_star, (grad_w_bound) / (self.gradW)))
         # input()
 
         return sigma_fun.update(beta_star, self.gradW)
@@ -482,21 +502,18 @@ class ExpSafeConstraintBaseline(Experiment):
 
         max_improvement = self.J - self.J_BASELINE #self.perf_improvement
 
-        low = (1 - math.sqrt(1 - (4 * d * (-max_improvement))/(self.gradW**2))) / (2 * d)
-        high = (1 + math.sqrt(1 - (4 * d * (-max_improvement))/(self.gradW**2))) / (2 * d)
-
-
-        #grad = np.clip(gradDelta, low, high)
-        step = low  # Fix the step to be the lowest one
+        step = (1 - math.sqrt(1 - (4 * d * (-max_improvement))/(self.gradW**2))) / (2 * d)
 
         return sigma_fun.update(step, self.gradW)
 
 class ExpSafeConstraintBudget(Experiment):
     """Exploration cost is defined by a Budget, that is earned when improving theta, and lost when not following the gradient
     """
-    def __init__(self, lqg_environment, exp_name = None, gamma_coeff=0.0):
+    def __init__(self, lqg_environment, exp_name = None, gamma_coeff=0.0, initial_budget = 0):
         super().__init__(lqg_environment, exp_name)
-        self.budget = 0
+        self.budget = initial_budget
+        self.initial_budget = initial_budget
+
         self.budget_data = np.zeros(self.UPDATE_DIM)
 
         self.gamma_coeff = gamma_coeff
@@ -504,6 +521,7 @@ class ExpSafeConstraintBudget(Experiment):
     def get_param_list(self, params):
         ret_params = super().get_param_list(params)
         ret_params['gamma_coeff'] = self.gamma_coeff
+        ret_params['initial_budget'] = self.initial_budget
 
         return ret_params
 
@@ -513,17 +531,18 @@ class ExpSafeConstraintBudget(Experiment):
         super().on_before_update(current_theta, current_sigma_fun)
 
         # Save budget data
-        if self.t >= self.budget_data.shape[0]:
-            self.budget_data = np.concatenate([self.budget_data, np.zeros(self.UPDATE_DIM)])
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_data.shape[0]:
+                self.budget_data = np.concatenate([self.budget_data, np.zeros(self.UPDATE_DIM)])
 
-        self.budget_data[self.t] = self.budget
+            self.budget_data[self.num_updates] = self.budget
 
 
     def get_traj_data(self):
         """Returns a matrix containing all the data we want to store
         """
         data, columns = super().get_traj_data()
-        return np.hstack([data, self.budget_data.reshape(-1,1)]), columns + ['BUDGET']
+        return np.hstack([data, self.budget_data[:self.num_updates].reshape(-1,1)]), columns + ['BUDGET']
 
     def on_theta_update(self, theta, sigma_fun):
         new_theta = super().on_theta_update(theta, sigma_fun)
@@ -546,52 +565,332 @@ class ExpSafeConstraintBudget(Experiment):
         a_star=1/(2*c)
 
         # assert that the budget is small enough
-        self.budget = max(self.budget, -(self.gradW**2)/(4*d))
+        if self.budget >= -(self.gradW**2)/(4*d):
+            beta_tilde = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+        else:
+            beta_tilde = 1/(2*d)
+        #self.budget = max(self.budget, -(self.gradW**2)/(4*d))
 
-        beta_tilde = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+        #beta_tilde = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
 
         new_sigma_fun = sigma_fun.update(beta_tilde, self.gradW)
         new_sigma = new_sigma_fun.eval()
 
         # Reduce the budget due to lost exploitation
-        self.budget -= (1-self.gamma_coeff)*((self.gradW**2) / (4 * d))
+        self.budget -= (1-math.pow(self.gamma_coeff, self.t))*((self.gradW**2) / (4 * d))
 
         # Improve the budget due to performance improvement
         self.budget += utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B) - self.J
 
         return new_sigma_fun
 
+
+class ExpExplorationCost(Experiment):
+    """Exploration cost is defined as J(theta, 0) - J(theta, sigma).
+    Initial exploration cost is given, then it will be discounted by a factor lambda
+    """
+    def __init__(self, lqg_environment, exp_name = None, init_exp = -1, discount_coeff=1.0):
+        """
+        init_exp: Float or -1
+            If set to a positive value, then this will define the initial exploration cost.
+            If set to -1, then the initial exploration cost will be defined by the initial policy
+        """
+        super().__init__(lqg_environment, exp_name)
+        self.init_exp = init_exp
+        self.current_exp = None
+
+        self.discount_coeff = discount_coeff
+
+    def get_param_list(self, params):
+        ret_params = super().get_param_list(params)
+        ret_params['discount_coeff'] = self.discount_coeff
+        ret_params['init_exp'] = self.init_exp
+
+        return ret_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        if self.current_exp is None:
+            if self.init_exp == -1:
+                self.current_exp = self.exploration_data[0]
+            else:
+                self.current_exp = self.init_exp
+
+    def on_sigma_update(self, theta, sigma_fun):
+        self.current_exp = self.current_exp * self.discount_coeff
+        #self.current_exp = max(MIN_SIGMA, self.current_exp - self.discount_coeff)
+        new_sigma = utils.calc_optimal_sigma(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, self.ENV_B, self.current_exp)
+
+        if isinstance(sigma_fun, Exponential):
+            w = np.clip(math.log(new_sigma), math.log(MIN_SIGMA), math.log(MAX_SIGMA))
+            return Exponential(w)
+        else:
+            return Identity(new_sigma)
+
+
+class ExplorationBudget(Experiment):
+    def __init__(self, lqg_environment, exp_name = None, gamma_coeff=0.0, initial_budget = 0):
+        super().__init__(lqg_environment, exp_name)
+        self.budget = initial_budget
+        self.initial_budget = initial_budget
+
+        self.budget_data = np.zeros(self.UPDATE_DIM)
+
+        self.gamma_coeff = gamma_coeff
+
+        self.first_time = True
+
+    def get_param_list(self, params):
+        ret_params = super().get_param_list(params)
+        ret_params['gamma_coeff'] = self.gamma_coeff
+        ret_params['initial_budget'] = self.initial_budget
+
+        return ret_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        # Save budget data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_data.shape[0]:
+                self.budget_data = np.concatenate([self.budget_data, np.zeros(self.UPDATE_DIM)])
+
+            self.budget_data[self.num_updates] = self.budget
+
+
+    def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
+        data, columns = super().get_traj_data()
+        return np.hstack([data, self.budget_data[:self.num_updates].reshape(-1,1)]), columns + ['BUDGET']
+
+    def on_theta_update(self, theta, sigma_fun):
+        new_theta = super().on_theta_update(theta, sigma_fun)
+
+        sigma = sigma_fun.eval()
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        alpha=1/(2*c)
+
+        grad_det = utils.calc_K(theta, 0, self.ENV_GAMMA, self.ENV_R, self.ENV_Q, self.M)
+        self.budget_increment = alpha * (self.gradK)**2 - alpha * (grad_det)**2
+
+        #self.budget += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+        # self.budget += alpha * (self.gradK)**2
+        #
+        # grad_det = utils.calc_K(theta, 0, self.ENV_GAMMA, self.ENV_R, self.ENV_Q, self.M)
+        # print(grad_det)
+        # self.budget -= alpha * (grad_det)**2
+
+
+        return new_theta
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+        sigma = sigma_fun.eval()
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        if self.first_time:
+            self.budget = (self.gradW**2)/(4*d)
+
+            self.first_time = False
+
+
+
+        a_star=1/(2*c)
+
+        max_improvement = (self.gradW**2)/(4*d) - self.budget
+
+        # assert that the budget is small enough
+
+        beta_tilde = (1 - math.sqrt(1 - (4 * d * (max_improvement))/(self.gradW**2))) / (2 * d)
+
+
+        new_sigma_fun = sigma_fun.update(beta_tilde, self.gradW)
+        new_sigma = new_sigma_fun.eval()
+
+        # Reduce the budget due to lost exploitation
+        #self.budget -= (1-self.gamma_coeff)*((self.gradW**2) / (4 * d))
+
+        # Improve the budget due to performance improvement
+        #self.budget -= (self.J - utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B))
+        self.budget += beta_tilde * (self.gradW)**2 + self.budget_increment
+
+        return new_sigma_fun
+
+
+class ExpDeterministicPolicy(Experiment):
+    """
+    """
+    def __init__(self, lqg_environment, exp_name = None, gamma_coeff=0.0, initial_budget = 0):
+        super().__init__(lqg_environment, exp_name)
+        self.budget = initial_budget
+        self.initial_budget = initial_budget
+
+        self.budget_data = np.zeros(self.UPDATE_DIM)
+
+        self.gamma_coeff = gamma_coeff
+
+    def get_param_list(self, params):
+        ret_params = super().get_param_list(params)
+        ret_params['gamma_coeff'] = self.gamma_coeff
+        ret_params['initial_budget'] = self.initial_budget
+
+        return ret_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        # Save budget data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_data.shape[0]:
+                self.budget_data = np.concatenate([self.budget_data, np.zeros(self.UPDATE_DIM)])
+
+            self.budget_data[self.num_updates] = self.budget
+
+
+    def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
+        data, columns = super().get_traj_data()
+        return np.hstack([data, self.budget_data[:self.num_updates].reshape(-1,1)]), columns + ['BUDGET']
+
+    def on_theta_update(self, theta, sigma_fun):
+        new_theta = super().on_theta_update(theta, sigma_fun)
+
+        sigma = sigma_fun.eval()
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        self.budget += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+
+        return new_theta
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        a_star=1/(2*c)
+
+        # assert that the budget is small enough
+        if self.budget >= -(self.gradW**2)/(4*d):
+            beta_tilde = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+        else:
+            beta_tilde = 1/(2*d)
+        #self.budget = max(self.budget, -(self.gradW**2)/(4*d))
+
+        #beta_tilde = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+
+        new_sigma_fun = sigma_fun.update(beta_tilde, self.gradW)
+        new_sigma = new_sigma_fun.eval()
+
+        # Reduce the budget due to lost exploitation
+        self.budget -= (1-math.pow(self.gamma_coeff, self.t))*((self.gradW**2) / (4 * d))
+
+        # Improve the budget due to performance improvement
+        self.budget += utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B) - self.J
+
+        return new_sigma_fun
+
+
+
+
+
 def generate_filename():
     return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(15))
 
 
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == '__main__':
-    BASE_FOLDER = 'prova'
+    BASE_FOLDER = 'experiments_long'
     maybe_make_dir(BASE_FOLDER)
 
-    N_ITERATIONS = 50000
+    N_ITERATIONS = 2500000
     EPS = 1e-03
     INIT_THETA = -0.1
 
-
-    l = Exponential(0)
-    e = ExpSafeConstraint(LQG_ENV, "ExpSafeConstraint_two_steps")
-    filename = os.path.join(BASE_FOLDER, generate_filename())
-    e.run(theta=INIT_THETA, sigma_fun=l, eps=EPS, verbose=True, two_steps=True, n_iterations=N_ITERATIONS, filename=filename)
-
-    exit()
-    gamma_coeffs = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99, 1]
+    gamma_coeffs = [0.99999]
 
     for gamma_coeff in gamma_coeffs:
-        e = ExpSafeConstraintBudget(LQG_ENV, "ExpSafeConstraintBudget_two_steps", gamma_coeff=gamma_coeff)
-        filename = os.path.join(BASE_FOLDER, generate_filename()) + '.npy'
-        print("Running experiment: ExpSafeConstraintBudget_two_steps(gamma_coeff={})".format(gamma_coeff))
+        e = ExpSafeConstraintBudget(LQG_ENV, "ExpSafeConstraintBudget_new", gamma_coeff=gamma_coeff)
+        filename = os.path.join(BASE_FOLDER, generate_filename())
+        print("Running experiment: ExpSafeConstraintBudget_new(gamma_coeff={})".format(gamma_coeff))
         e.run(theta=INIT_THETA, sigma_fun=Exponential(0), eps=EPS, verbose=False, two_steps=True, n_iterations=N_ITERATIONS, filename=filename)
 
+    exit()
 
 
-    exit() # Prevent running all the other experiments
+    # l = Exponential(0)
+    # e = ExpSafeConstraintBudgetFork(LQG_ENV, "ExpSafeConstraintBudgetFork")
+    # filename = os.path.join(BASE_FOLDER, generate_filename())
+    # e.run(theta=INIT_THETA, sigma_fun=l, eps=EPS, verbose=True, two_steps=False, n_iterations=N_ITERATIONS, filename=filename, downsample=1)
+    #
+    # exit()
+    #
+    # l = Exponential(0)
+    # e = ExplorationBudget(LQG_ENV, "ExplorationBudget_Taylor6")
+    # filename = os.path.join(BASE_FOLDER, generate_filename())
+    # e.run(theta=INIT_THETA, sigma_fun=l, eps=EPS, verbose=True, two_steps=False, n_iterations=N_ITERATIONS, filename=filename, downsample=1)
+    #
+    # exit()
+    #
+    # l = Exponential(0)
+    # e = ExpExplorationCost(LQG_ENV, "ExpExplorationCost", discount_coeff=1.0, init_exp=-1)
+    # filename = os.path.join(BASE_FOLDER, generate_filename())
+    # e.run(theta=INIT_THETA, sigma_fun=l, eps=EPS, verbose=True, two_steps=True, n_iterations=N_ITERATIONS, filename=filename, downsample=1)
+    #
+    # exit()
 
+    # for discount_coeff in [1, 0.1, 0.01, 0.001, 0.0001,0.0005, 0.00001]:
+    #     for init_exp in [-1]:
+    #         l = Exponential(0)
+    #         e = ExpExplorationCost(LQG_ENV, "ExpExplorationCostConstant_two_steps", discount_coeff=discount_coeff, init_exp=init_exp)
+    #         filename = os.path.join(BASE_FOLDER, generate_filename())
+    #         e.run(theta=INIT_THETA, sigma_fun=l, eps=EPS, verbose=False, two_steps=True, n_iterations=N_ITERATIONS, filename=filename, downsample=10)
+    #
+    # exit()
+
+
+    # gamma_coeffs = [0.999, 0.9999, 0.99999] #gamma_coeffs = [0, 0.2, 0.5, 0.8, 0.99, 1]
+    # initial_budget = [0, 100, 200]
+    # for gamma_coeff in gamma_coeffs:
+    #     for init_budget in initial_budget:
+    #         e = ExpSafeConstraintBudgetFork(LQG_ENV, "ExpSafeConstraintBudgetFork_two_steps", gamma_coeff=gamma_coeff, initial_budget=init_budget)
+    #         filename = os.path.join(BASE_FOLDER, generate_filename())
+    #         print("Running experiment: ExpSafeConstraintBudgetFork_two_steps(gamma_coeff={})".format(gamma_coeff))
+    #         e.run(  theta=INIT_THETA,
+    #                 sigma_fun=Exponential(0),
+    #                 eps=EPS,
+    #                 verbose=False,
+    #                 two_steps=True,
+    #                 n_iterations=N_ITERATIONS,
+    #                 filename=filename,
+    #                 downsample=4)
+    #
+    #
+    # exit()
 
 
 
@@ -599,13 +898,13 @@ if __name__ == '__main__':
     #   RUN ALL STANDALONE EXPERIMENTS
     #
 
-    experiments = [ExpSigmaTwoStep, ExpArgmaxExact, ExpSafeConstraint]
-    exp_names = ["ExpSigmaTwoStep", "ExpArgmaxExact", "ExpSafeConstraint"]
+    experiments = [ExpSigmaTwoStep, ExpSafeConstraint, ExpSafeConstraintBaseline, ExpArgmaxTaylor]
+    exp_names = ["ExpSigmaTwoStep", "ExpSafeConstraint", "ExpSafeConstraintBaseline", "ExpArgmaxTaylor"]
 
     for exp_class,name in zip(experiments, exp_names):
         for v,count_step in zip([False, True], ["one_step", "two_steps"]):
             print("Running experiment: {}_{}".format(name, count_step))
-            filename = os.path.join(BASE_FOLDER, generate_filename()) + '.npy'
+            filename = os.path.join(BASE_FOLDER, generate_filename())
 
             exp = exp_class(LQG_ENV, exp_name="%s_%s" % (name, count_step))
 
@@ -622,12 +921,12 @@ if __name__ == '__main__':
     #
 
 
-    lambda_experiments = [ExpLambda(LQG_ENV, alphaSigma, lambda_coeff) \
+    lambda_experiments = [ExpLambda(LQG_ENV, alphaSigma, lambda_coeff, exp_name='Lambda_one_step') \
                     for alphaSigma in [0, 0.005, 0.01, 0.001, 0.0005, 0.02] \
                     for lambda_coeff in [0, 0.000001, 0.00001, 0.000005, 1]]
 
     for exp in lambda_experiments:
-        filename = os.path.join(BASE_FOLDER, generate_filename()) + '.npy'
+        filename = os.path.join(BASE_FOLDER, generate_filename())
         print("Running experiment: Lambda(lambda={}, alpha_sigma={})".format(exp.lambda_coeff, exp.alphaSigma))
         exp.run(theta=INIT_THETA,
                 sigma_fun=Exponential(0),
@@ -640,10 +939,10 @@ if __name__ == '__main__':
     #
     #   RUN BUDGET EXPERIMENTS
     #
-    gamma_coeffs = np.append(np.linspace(0, 1, 11), 0.99)
+    gamma_coeffs = [0, 0.2, 0.5, 0.8, 0.99, 1]
 
     for gamma_coeff in gamma_coeffs:
         e = ExpSafeConstraintBudget(LQG_ENV, "ExpSafeConstraintBudget_two_steps", gamma_coeff=gamma_coeff)
-        filename = os.path.join(BASE_FOLDER, generate_filename()) + '.npy'
+        filename = os.path.join(BASE_FOLDER, generate_filename())
         print("Running experiment: ExpSafeConstraintBudget_two_steps(gamma_coeff={})".format(gamma_coeff))
         e.run(theta=INIT_THETA, sigma_fun=Exponential(0), eps=EPS, verbose=False, two_steps=True, n_iterations=N_ITERATIONS, filename=filename)
