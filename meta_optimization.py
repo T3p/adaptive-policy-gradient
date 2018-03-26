@@ -1,6 +1,19 @@
 import math
 from utils import *
-from gradient_estimation import Estimator
+
+def gaussPenaltyCoeff(R, M, gamma, volume, sigma):
+    """Penalty coefficient(s) for performance improvement bounds
+
+    Parameters:
+    R -- maximum absolute-value reward
+    M -- upper bound on all state features
+    gamma -- discount factor
+    volume -- volume of the action space
+    sigma -- standard deviation, or an array representing a diagonal covariance matrix
+    """
+    return float(R * M**2) / ((1 - gamma)**2 * sigma**2) * \
+        (float(volume) / math.sqrt(2*math.pi * sigma**2) + \
+            float(gamma) / (2*(1 - gamma)))
 
 class TaskProp:
     """Properties of the RL task, true or estimated from experience"""

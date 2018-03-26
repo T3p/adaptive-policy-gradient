@@ -1,13 +1,25 @@
-from numpy.random import normal
+from numpy.random import normal, uniform
 import numpy as np
 import math
-from scipy.linalg import sqrtm
 
-"""Policies"""
+"""Continuous action policies"""
 
+class ContRandPolicy:
+    """Uniform random policy for continuous actions"""
+    
+    def __init__(self, a_min=-1, a_max=1):
+        self.a_min = a_min
+        self.a_max = a_max
+    
+    def act(self, phi=None):
+        return uniform(self.a_min, self.a_max)
+    
+    def prob(self, a=None):
+        volume = np.prod(np.abs(self.a_max - self.a_min))
+        return 1./volume
 
-class GaussPolicy:
-    """Gaussian parametric policy with mean linear in the features and constant variance matrix"""
+class LFGaussPolicy:
+    """Gaussian parametric policy with mean linear (L) in the features and fixed (F) variance matrix"""
 
     def __init__(self,theta,cov):
         """Parameters:
@@ -91,22 +103,6 @@ class GaussPolicy:
         
         return np.asscalar(score) if np.size(score)==1 else np.ravel(score)
 
-    def penaltyCoeff(self,R,M,gamma,volume,c=None):
-        """Penalty coefficient for performance improvement bounds
-
-        Parameters:
-        R -- maximum absolute-value reward
-        M -- upper bound on all state features
-        gamma -- discount factor
-        volume -- volume of the action space
-        """
-        if not c==None:
-            return c
-
-        return float(R*M**2)/((1-gamma)**2*self.sigma**2)* \
-            (float(volume)/math.sqrt(2*math.pi*self.sigma**2) + \
-                float(gamma)/(2*(1-gamma)))
-
     def update(self,delta_theta):
         """Updates the policy parameter
 
@@ -116,3 +112,6 @@ class GaussPolicy:
         assert np.size(delta_theta)==self.param_len
         theta_new = self.get_theta() + np.atleast_1d(delta_theta)
         self.theta_mat = np.reshape(theta_new,(self.act_dim,self.feat_dim)).astype(float) 
+    
+
+GaussPolicy = LFGaussPolicy
