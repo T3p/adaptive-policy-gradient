@@ -6,7 +6,7 @@ Created on Thu Mar 22 10:55:14 2018
 @author: matteo
 """
 
-import lqg1d
+import lqg
 import gym
 import numpy as np
 import pandas as pd
@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 MAX_ITER = int(1e6)
 
 #Task
-env = gym.make('LQG1D-v0')
+env = gym.make('LQG-v0')
 R = float(np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2))
 M = float(env.max_pos)
 gamma = float(env.gamma)

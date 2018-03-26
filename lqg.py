@@ -22,18 +22,18 @@ References
 """
 
 
-#classic_control
+#Register if not already registered
 from gym.envs.registration import register, spec
 try:
-    spec('LQG1D-v0')
+    spec('LQG-v0')
 except:
     register(
-        id='LQG1D-v0',
-        entry_point='lqg1d:LQG1D'
+        id='LQG-v0',
+        entry_point='lqg:LQG'
     )
 
 
-class LQG1D(gym.Env):
+class LQG(gym.Env):
     metadata = {
         'render.modes': ['human', 'rgb_array'],
         'video.frames_per_second': 30
@@ -42,7 +42,6 @@ class LQG1D(gym.Env):
     def __init__(self, discrete_reward=False):
         self.horizon = 20
         self.gamma = 0.99
-        self.sigma_controller = 1.
         self.discrete_reward = discrete_reward
         self.max_pos = 4.0
         self.max_action = 4.0
@@ -51,6 +50,7 @@ class LQG1D(gym.Env):
         self.B = np.array([1]).reshape((1, 1))
         self.Q = np.array([0.9]).reshape((1, 1))
         self.R = np.array([0.9]).reshape((1, 1))
+        self.initial_states = []
 
         # gym attributes
         self.viewer = None
@@ -59,8 +59,6 @@ class LQG1D(gym.Env):
                                        high=self.max_action,
                                        shape=(1,))
         self.observation_space = spaces.Box(low=-high, high=high)
-
-        self.initial_states = np.array([[1, 2, 5, 7, 10]]).T
 
         # initialize state
         self.seed()
@@ -84,12 +82,13 @@ class LQG1D(gym.Env):
         return self.get_state(), -np.asscalar(cost), False, {}
 
     def reset(self, state=None):
-        if state is None:
+        if state is not None:
+            self.state = state
+        elif self.initial_states:
+            self.state = np.array(self.np_random.choice(self.initial_states))
+        else:
             self.state = np.array([self.np_random.uniform(low=-self.max_pos,
                                                           high=self.max_pos)])
-        else:
-            self.state = np.array(state)
-
         return self.get_state()
 
     def get_state(self):
@@ -234,6 +233,14 @@ class LQG1D(gym.Env):
         return min(0,J)
 
     def grad_K(self, K, Sigma):
+        """
+        This function computes the gradient of the linear controller w.r.t.
+        parameter K.
+        Args: 
+            K: the controller parameter
+            Sigma: controller covariance matrix
+        Currently supports only the 1-dimensional case
+        """
         I = np.eye(self.Q.shape[0], self.Q.shape[1])
         if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
             raise NotImplementedError
@@ -246,7 +253,15 @@ class LQG1D(gym.Env):
         dePdeK = 2*(theta*self.R/den + self.gamma*(self.Q + theta**2*self.R)*(1+theta)/den**2)
         return np.asscalar(- dePdeK*(self.max_pos**2/3 + self.gamma*sigma/(1 - self.gamma)))
 
-    def grad_Sigma(self, K, Sigma=None):
+    def grad_Sigma(self, K, Sigma):
+        """
+        This function computes the gradient of the linear controller w.r.t.
+        controller covariance matrix Sigma.
+        Args: 
+            K: the controller parameter
+            Sigma: controller covariance matrix
+        Currently supports only the 1-dimensional case
+        """
         I = np.eye(self.Q.shape[0], self.Q.shape[1])
         if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
             raise NotImplementedError
@@ -257,7 +272,15 @@ class LQG1D(gym.Env):
         P = self._computeP2(K)
         return np.asscalar(-(self.R + self.gamma*P)/(1 - self.gamma))
 
-    def grad_mixed(self, K, Sigma=None):
+    def grad_mixed(self, K, Sigma):
+        """
+        This function computes the mixed second derivative of the linear
+        controller w.r.t. K and Sigma.
+        Args:
+            K: the controller parameter
+            Sigma: controller covariance matrix
+        Currently supports only the 1-dimensional case
+        """
         I = np.eye(self.Q.shape[0], self.Q.shape[1])
         if not np.array_equal(self.A, I) or not np.array_equal(self.B, I):
             raise NotImplementedError
@@ -286,7 +309,6 @@ class LQG1D(gym.Env):
         Returns:
             Qfun (float): The Q-value in the given pair (x,u) under the given
             controller
-
         """
         if isinstance(x, Number):
             x = np.array([x])
