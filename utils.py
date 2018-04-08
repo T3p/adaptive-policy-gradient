@@ -1,6 +1,8 @@
 import numpy as np
 import math
 import os
+import random
+import string
 
 try:
     import numba
@@ -44,6 +46,9 @@ def range_unlimited(r=-1):
     while n != r:
         yield n
         n += 1
+
+def generate_filename():
+    return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(15))
 
 
 #

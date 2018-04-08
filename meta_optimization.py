@@ -19,7 +19,7 @@ class TaskProp:
             diameter -- maximum euclidean distance among possible actions
         """
         self.gamma = gamma
-        self.H = H 
+        self.H = H
         self.min_action = np.atleast_1d(min_action)
         self.max_action = np.atleast_1d(max_action)
 
@@ -55,10 +55,24 @@ class TaskProp:
 
         #print R,M,volume
 
+    @staticmethod
+    def fromLQGEnvironment(env):
+        return TaskProp(
+            env.gamma,
+            env.horizon,
+            -env.max_action,
+            env.max_action,
+            R=np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2),
+            M=env.max_pos,
+            min_state=-env.max_pos,
+            max_state=env.max_pos,
+            volume=2*env.max_action,
+            diameter=None)
+
 
 class GradStats:
     """Statistics about a gradient estimate"""
-  
+
     def __init__(self,grad_samples):
         """Parameters:
             grad_samples: gradient estimates
@@ -87,7 +101,7 @@ class GradStats:
         if self.sample_range==None:
             self.sample_range = max(self.grad_samples) - min(self.grad_samples)
         return self.sample_range
-        
+
 
 class OptConstr:
     """Constraints on the meta-optimization process"""
@@ -112,7 +126,7 @@ default_constr = OptConstr()
 
 def gradRange(pol,tp):
     """Range of the gradient estimate
-        
+
         Parameters:
         pol -- policy in use
         tp -- TaskProp object containing the (true or last estimated) properties of the task
@@ -126,7 +140,7 @@ def estError(d,f,N):
         Parameters:
         d -- 1/sqrt(N) coefficient
         f -- 1/N coefficient
-        N -- batch size 
+        N -- batch size
     """
     return float(d)/math.sqrt(N) + float(f)/N
 
@@ -142,6 +156,45 @@ class MetaSelector(object):
 
 ConstMeta = MetaSelector
 
+class BudgetMetaSelector(object):
+    def __init__(self):
+        pass
+
+    def select_alpha(self, policy, gradients, tp, N_old, iteration, budget):
+        """Perform a safe update on theta
+        """
+        sigma = policy.sigma
+        c = policy.penaltyCoeff(tp.R, tp.M, tp.gamma, tp.volume)
+
+        if budget >= -(gradients['grad_theta']**2)/(4*c):
+            alpha_star = (1 + math.sqrt(1 - (4 * c * (-budget))/(gradients['grad_theta']**2))) / (2 * c)
+        else:
+            alpha_star = 1/(2*c)
+
+        return alpha_star,N_old,False
+
+    def select_beta(self, policy, gradients, tp, N_old, iteration, budget):
+        sigma = policy.sigma
+
+        d = policy.penaltyCoeffSigma(tp.R, tp.M, tp.gamma, tp.volume)
+
+        # assert that the budget is small enough
+        if budget >= -(gradients['grad_w']**2)/(4*d):
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-budget))/(gradients['grad_w']**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-budget))/(gradients['grad_w']**2))) / (2 * d)
+
+            if gradients['gradDeltaW'] / gradients['grad_w'] >= 0:
+                beta_star = beta_tilde_plus * gradients['grad_w'] / gradients['gradDeltaW']
+            else:
+                beta_star = beta_tilde_minus * gradients['grad_w'] / gradients['gradDeltaW']
+
+        else:
+            beta_star = 1/(2*d) * gradients['grad_w'] / gradients['gradDeltaW']
+
+
+
+        return beta_star,N_old,False
+
 class VanishingMeta(MetaSelector):
     def __init__(self,alpha,N,alpha_exp=0.5,N_exp = 0):
         super(VanishingMeta,self).__init__(alpha,N)
@@ -156,7 +209,7 @@ class MetaOptimizer(MetaSelector):
 
     def __init__(self,bound_name='bernstein',constr=default_constr,estimator_name='gpomdp',samp=True,cost_sensitive_step=False,c=None):
 
-        
+
         bounds = {'chebyshev': self.__chebyshev, 'hoeffding': self.__hoeffding, 'bernstein': self.__bernstein}
 
         self.bound_name = bound_name
@@ -182,7 +235,7 @@ class MetaOptimizer(MetaSelector):
     def alphaPost(self,pol,tp,max_grad,eps):
         """Optimal step size given an upper bound of the estimaton error,
             depending on the batch size that is actually used
-            
+
             Parameters:
             pol -- policy in use
             tp -- TaskProp object containing the (true or last estimated) properties of the task
@@ -201,7 +254,7 @@ class MetaOptimizer(MetaSelector):
             gs -- GradStats object containing statistics about last gradient estimate
             tp -- TaskProp object containing the (true or last estimated) properties of the task
             N_pre -- batch size that was actually used to compute the last gradient estimate
-            
+
             Returns:
             alpha -- the optimal non-scalar step size
             N -- the optimal batch size
@@ -209,7 +262,7 @@ class MetaOptimizer(MetaSelector):
         """
         d,f,eps_star,N_star = self.bound(pol,gs,tp)
         actual_eps = estError(d,f,N_pre)
-        
+
         alpha_k = self.alphaPost(pol,tp,gs.get_max(),actual_eps)
 
         if(self.cs_step):
@@ -221,7 +274,7 @@ class MetaOptimizer(MetaSelector):
         alpha = np.zeros(pol.param_len)
         alpha[gs.get_amax()] = alpha_k
 
-        return alpha,N,safe 
+        return alpha,N,safe
 
     def __str__(self):
         return 'Estimator: {}, Bound: {}, Empirical range: {}, delta = {}'.format(self.estimator_name,self.bound_name,self.samp,self.constr.delta)
@@ -292,5 +345,3 @@ class MetaOptimizer(MetaSelector):
         #        break
 
         return d,f,eps_star,N_star
-
-

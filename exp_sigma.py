@@ -258,7 +258,7 @@ class Experiment(object):
         for t in range_unlimited(n_iterations):
             sigma = sigma_fun.eval()
             # Early stopping if converged or diverged
-            if abs(OPTIMAL_K - theta) <= eps and abs(sigma) <= MIN_SIGMA:
+            if abs(OPTIMAL_K - theta) <= eps:# and abs(sigma) <= MIN_SIGMA:
                 break
             if abs(theta) > 10:
                 print("DIVERGED")
@@ -270,8 +270,8 @@ class Experiment(object):
             # Display
             if verbose:
                 if t % 100 == 0:
-                    print("\nT\t\tTheta\t\tSigma\t\tJ\n")
-                print("{}\t\t{:.5f}\t\t{:.4f}\t\tJ{:.5f}".format(t, theta, sigma, self.J))
+                    print("\nT\t\tTheta\t\tSigma\t\tJ\t\tJ(0)\n")
+                print("{}\t\t{:.5f}\t\t{:.10f}\t\tJ{:.5f}\t\tJ(0){:.5f}\t\t{:.5f}".format(t, theta, sigma, self.J, utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B), self.budget))
 
             # UPDATE PARAMETERS
 
@@ -290,6 +290,9 @@ class Experiment(object):
             sigma_fun = new_sigma_fun
 
             self.on_after_update(theta, sigma_fun)
+
+            if theta >= 0:
+                break
 
 
         if filename is not None:
@@ -727,7 +730,7 @@ class ExplorationBudget(Experiment):
 
 
 class ExpDeterministicPolicy(Experiment):
-    """
+    """Evaluate deterministic policy
     """
     def __init__(self, lqg_environment, exp_name = None, gamma_coeff=0.0, initial_budget = 0):
         super().__init__(lqg_environment, exp_name)
@@ -735,6 +738,8 @@ class ExpDeterministicPolicy(Experiment):
         self.initial_budget = initial_budget
 
         self.budget_data = np.zeros(self.UPDATE_DIM)
+        self.detJ_data = np.zeros(self.UPDATE_DIM)
+        self.JplusDetJ_data = np.zeros(self.UPDATE_DIM)
 
         self.gamma_coeff = gamma_coeff
 
@@ -754,23 +759,37 @@ class ExpDeterministicPolicy(Experiment):
         if self.t % self.downsample == 0:
             if self.num_updates >= self.budget_data.shape[0]:
                 self.budget_data = np.concatenate([self.budget_data, np.zeros(self.UPDATE_DIM)])
+                self.detJ_data = np.concatenate([self.detJ_data, np.zeros(self.UPDATE_DIM)])
+                self.JplusDetJ_data = np.concatenate([self.JplusDetJ_data, np.zeros(self.UPDATE_DIM)])
 
             self.budget_data[self.num_updates] = self.budget
+            self.detJ_data[self.num_updates] = utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+            self.JplusDetJ_data[self.num_updates] = self.J + self.detJ_data[self.num_updates]
+
 
 
     def get_traj_data(self):
         """Returns a matrix containing all the data we want to store
         """
         data, columns = super().get_traj_data()
-        return np.hstack([data, self.budget_data[:self.num_updates].reshape(-1,1)]), columns + ['BUDGET']
+        return np.hstack([data,
+                    self.budget_data[:self.num_updates].reshape(-1,1),
+                    self.detJ_data[:self.num_updates].reshape(-1,1),
+                    self.JplusDetJ_data[:self.num_updates].reshape(-1,1)]), columns + ['BUDGET', 'J_DET', 'J+J_DET']
 
     def on_theta_update(self, theta, sigma_fun):
+        """Perform a safe update on theta
+        """
         new_theta = super().on_theta_update(theta, sigma_fun)
 
         sigma = sigma_fun.eval()
-        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
-
         self.budget += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+
+        J_det = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        prev_det = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        self.budget += J_det - prev_det
+
 
         return new_theta
 
@@ -782,22 +801,35 @@ class ExpDeterministicPolicy(Experiment):
         c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
         d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
 
-        a_star=1/(2*c)
+        alphaStar=1/(2*c)
+
+        grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
+        grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
+
+        # Compute the gradient for sigma
+        grad_local_step = (1/2) * self.gradK**2 * grad_sigma_alpha_star
+        grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+        gradDelta = grad_local_step + grad_far_sighted
+        gradDeltaW = gradDelta * math.exp(sigma_fun.param)
 
         # assert that the budget is small enough
         if self.budget >= -(self.gradW**2)/(4*d):
-            beta_tilde = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+
+            if gradDeltaW / self.gradW >= 0:
+                beta_star = beta_tilde_plus * self.gradW / gradDeltaW
+            else:
+                beta_star = beta_tilde_minus * self.gradW / gradDeltaW
+
         else:
-            beta_tilde = 1/(2*d)
-        #self.budget = max(self.budget, -(self.gradW**2)/(4*d))
+            beta_star = 1/(2*d) * self.gradW / gradDeltaW
 
-        #beta_tilde = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
 
-        new_sigma_fun = sigma_fun.update(beta_tilde, self.gradW)
+
+        new_sigma_fun = sigma_fun.update(beta_star, gradDeltaW)
         new_sigma = new_sigma_fun.eval()
-
-        # Reduce the budget due to lost exploitation
-        self.budget -= (1-math.pow(self.gamma_coeff, self.t))*((self.gradW**2) / (4 * d))
 
         # Improve the budget due to performance improvement
         self.budget += utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B) - self.J
@@ -805,7 +837,813 @@ class ExpDeterministicPolicy(Experiment):
         return new_sigma_fun
 
 
+class ExpDiscountedDeterministicPolicy(Experiment):
+    """Evaluate deterministic policy
+    """
+    def __init__(self, lqg_environment, exp_name = None, gamma_coeff=0.0, initial_budget = 0):
+        super().__init__(lqg_environment, exp_name)
+        self.budget = initial_budget
+        self.initial_budget = initial_budget
 
+        self.budget_data = np.zeros(self.UPDATE_DIM)
+        self.detJ_data = np.zeros(self.UPDATE_DIM)
+        self.JplusDetJ_data = np.zeros(self.UPDATE_DIM)
+
+        self.gamma_coeff = gamma_coeff
+
+    def get_param_list(self, params):
+        ret_params = super().get_param_list(params)
+        ret_params['gamma_coeff'] = self.gamma_coeff
+        ret_params['initial_budget'] = self.initial_budget
+
+        return ret_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        # Save budget data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_data.shape[0]:
+                self.budget_data = np.concatenate([self.budget_data, np.zeros(self.UPDATE_DIM)])
+                self.detJ_data = np.concatenate([self.detJ_data, np.zeros(self.UPDATE_DIM)])
+                self.JplusDetJ_data = np.concatenate([self.JplusDetJ_data, np.zeros(self.UPDATE_DIM)])
+
+            self.budget_data[self.num_updates] = self.budget
+            self.detJ_data[self.num_updates] = utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+            self.JplusDetJ_data[self.num_updates] = self.J + self.detJ_data[self.num_updates]
+
+
+
+    def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
+        data, columns = super().get_traj_data()
+        return np.hstack([data,
+                    self.budget_data[:self.num_updates].reshape(-1,1),
+                    self.detJ_data[:self.num_updates].reshape(-1,1),
+                    self.JplusDetJ_data[:self.num_updates].reshape(-1,1)]), columns + ['BUDGET', 'J_DET', 'J+J_DET']
+
+    def on_theta_update(self, theta, sigma_fun):
+        """Perform a safe update on theta
+        """
+        new_theta = super().on_theta_update(theta, sigma_fun)
+
+        sigma = sigma_fun.eval()
+        self.deltaBudget = 0
+        self.deltaBudget += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+
+        J_det = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        prev_det = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        self.deltaBudget += J_det - prev_det
+
+
+        return new_theta
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        alphaStar=1/(2*c)
+
+        grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
+        grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
+
+        # Compute the gradient for sigma
+        grad_local_step = (1/2) * self.gradK**2 * grad_sigma_alpha_star
+        grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+        gradDelta = grad_local_step + grad_far_sighted
+        gradDeltaW = gradDelta * math.exp(sigma_fun.param)
+
+        # assert that the budget is small enough
+        if self.budget >= -(self.gradW**2)/(4*d):
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+
+            if gradDeltaW / self.gradW >= 0:
+                beta_star = beta_tilde_plus * self.gradW / gradDeltaW
+            else:
+                beta_star = beta_tilde_minus * self.gradW / gradDeltaW
+
+        else:
+            beta_star = 1/(2*d) * self.gradW / gradDeltaW
+
+
+
+        new_sigma_fun = sigma_fun.update(beta_star, gradDeltaW)
+        new_sigma = new_sigma_fun.eval()
+
+        # Improve the budget due to performance improvement
+        self.deltaBudget += utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B) - self.J
+
+        cost = (utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B) - self.J)
+
+        self.budget += (math.pow(self.gamma_coeff, self.t)*self.deltaBudget - (1 - self.gamma_coeff) * (cost)) / (math.pow(self.gamma_coeff, self.t) + 1 - self.gamma_coeff)
+
+        return new_sigma_fun
+
+
+
+
+
+
+class ExpGuaranteedOnlineDeterministicPolicy(ExpDeterministicPolicy):
+    """Evaluate deterministic policy
+    """
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        sigma = current_sigma_fun.eval()
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        #max_budget = max(self.budget, self.budget - 0.9*(self.gradW**2)/(4*d))
+
+
+        #self.extra_budget = self.budget - min(self.budget, max_budget)
+        #self.budget = self.budget - self.extra_budget
+        self.budget -= self.gamma_coeff*(self.gradW**2)/(4*d)
+        #self.budget -= (1 - math.pow(0.999999, self.t))*(self.gradW**2)/(4*d)
+
+    def on_after_update(self, current_theta, current_sigma_fun):
+        #self.budget += self.extra_budget
+        #self.extra_budget = 0
+        super().on_after_update(current_theta, current_sigma_fun)
+
+
+
+class ExpDiscountedGuaranteedOnlineDeterministicPolicy(ExpDeterministicPolicy):
+    """Evaluate deterministic policy
+    """
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        sigma = current_sigma_fun.eval()
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        #max_budget = max(self.budget, self.budget - 0.9*(self.gradW**2)/(4*d))
+
+
+        #self.extra_budget = self.budget - min(self.budget, max_budget)
+        #self.budget = self.budget - self.extra_budget
+        self.budget -= (1 - math.pow(self.gamma_coeff, self.t))*(self.gradW**2)/(4*d)
+        #self.budget -= (1 - math.pow(0.999999, self.t))*(self.gradW**2)/(4*d)
+
+    def on_after_update(self, current_theta, current_sigma_fun):
+        #self.budget += self.extra_budget
+        #self.extra_budget = 0
+        super().on_after_update(current_theta, current_sigma_fun)
+
+
+
+
+class ExpEarlyStoppingCondition(ExpDeterministicPolicy):
+    """Stop condition: J(theta, 0) >= (1-gamma)*J(theta, sigma) + gamma*J(theta', 0)
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.STOP_UPDATE = False
+
+    def on_theta_update(self, theta, sigma_fun):
+        if self.STOP_UPDATE:
+            return 0
+
+        prev_theta = theta
+
+        new_theta = super().on_theta_update(theta, sigma_fun)
+
+        J_det_old = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        J_det_new = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        if (J_det_old) >= ((1 - self.gamma_coeff)*self.J + self.gamma_coeff * (J_det_new)):
+            self.STOP_UPDATE = True
+
+        return new_theta
+
+    def on_sigma_update(self, theta, sigma_fun):
+        if self.STOP_UPDATE:
+            return sigma_fun
+        else:
+            return super().on_sigma_update(theta, sigma_fun)
+
+
+class ExpBudgetReductionStopCondition(ExpDeterministicPolicy):
+    """Budget condition: J(theta, sigma) >= J(theta, 0)/(1-gamma) - gamma/(1-gamma)*J(theta', 0)
+    """
+    def on_theta_update(self, theta, sigma_fun):
+        prev_theta = theta
+
+        new_theta = super().on_theta_update(theta, sigma_fun)
+
+        J_det_old = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        J_det_new = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        self.budget = min(self.budget, -((J_det_old - self.gamma_coeff*J_det_new)/(1 - self.gamma_coeff) - self.J))
+
+        return new_theta
+
+
+
+
+
+class ExpThetaAndSigmaBudget(Experiment):
+    def __init__(self, lqg_environment, exp_name=None, alpha_coeff=0.0, beta_coeff=0.0, initial_budget=0):
+        super().__init__(lqg_environment, exp_name)
+        self.budget = initial_budget
+        self.initial_budget = initial_budget
+
+        self.budget_data = np.zeros(self.UPDATE_DIM)
+        self.detJ_data = np.zeros(self.UPDATE_DIM)
+        self.JplusDetJ_data = np.zeros(self.UPDATE_DIM)
+
+        self.alpha_coeff = alpha_coeff
+        self.beta_coeff = beta_coeff
+
+    def get_param_list(self, params):
+        ret_params = super().get_param_list(params)
+        ret_params['alpha_coeff'] = self.alpha_coeff
+        ret_params['beta_coeff'] = self.beta_coeff
+        ret_params['initial_budget'] = self.initial_budget
+
+        return ret_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        # Save budget data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_data.shape[0]:
+                self.budget_data = np.concatenate([self.budget_data, np.zeros(self.UPDATE_DIM)])
+                self.detJ_data = np.concatenate([self.detJ_data, np.zeros(self.UPDATE_DIM)])
+                self.JplusDetJ_data = np.concatenate([self.JplusDetJ_data, np.zeros(self.UPDATE_DIM)])
+
+            self.budget_data[self.num_updates] = self.budget
+            self.detJ_data[self.num_updates] = utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+            self.JplusDetJ_data[self.num_updates] = self.J + self.detJ_data[self.num_updates]
+
+
+
+    def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
+        data, columns = super().get_traj_data()
+        return np.hstack([data,
+                self.budget_data[:self.num_updates].reshape(-1, 1),
+                self.detJ_data[:self.num_updates].reshape(-1, 1),
+                self.JplusDetJ_data[:self.num_updates].reshape(-1, 1)]), columns + ['BUDGET', 'J_DET', 'J+J_DET']
+
+    def on_theta_update(self, theta, sigma_fun):
+        """Perform a safe update on theta
+        """
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        self.budget -= self.alpha_coeff*(self.gradK**2)/(4*c)
+
+        budget_theta = self.beta_coeff * self.budget
+
+        if budget_theta >= -(self.gradK**2)/(4*c):
+            alpha_star = (1 + math.sqrt(1 - (4 * c * (-budget_theta))/(self.gradK**2))) / (2 * c)
+        else:
+            alpha_star = 1/(2*c)
+
+        new_theta = theta + alpha_star*self.gradK
+
+        self.budget += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+
+        J_det = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        prev_det = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        self.budget += J_det - prev_det
+
+
+        return new_theta
+
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        self.budget -= self.alpha_coeff*(self.gradW**2)/(4*d)
+
+        alphaStar = 1/(2*c)
+
+        grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
+        grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
+
+        # Compute the gradient for sigma
+        grad_local_step = (1/2) * self.gradK**2 * grad_sigma_alpha_star
+        grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+        gradDelta = grad_local_step + grad_far_sighted
+        gradDeltaW = gradDelta * math.exp(sigma_fun.param)
+
+        budgetW = (1 - self.alpha_coeff - self.beta_coeff)*self.budget
+
+        # assert that the budget is small enough
+        if budgetW >= -(self.gradW**2)/(4*d):
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-budgetW))/(self.gradW**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-budgetW))/(self.gradW**2))) / (2 * d)
+
+            if gradDeltaW / self.gradW >= 0:
+                beta_star = beta_tilde_plus * self.gradW / gradDeltaW
+            else:
+                beta_star = beta_tilde_minus * self.gradW / gradDeltaW
+
+        else:
+            beta_star = 1/(2*d) * self.gradW / gradDeltaW
+
+
+
+        new_sigma_fun = sigma_fun.update(beta_star, gradDeltaW)
+        new_sigma = new_sigma_fun.eval()
+
+        # Improve the budget due to performance improvement
+        self.budget += utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B) - self.J
+
+
+
+        return new_sigma_fun
+
+
+
+class ExpTwoBudgetsDeltaDelta(Experiment):
+    def __init__(self, lqg_environment, exp_name=None):
+        super().__init__(lqg_environment, exp_name)
+        self.budget_theta = 0
+        self.budget_sigma = 0
+
+        self.prevDelta = 0
+
+        self.budget_theta_data = np.zeros(self.UPDATE_DIM)
+        self.budget_sigma_data = np.zeros(self.UPDATE_DIM)
+        self.detJ_data = np.zeros(self.UPDATE_DIM)
+        self.JplusDetJ_data = np.zeros(self.UPDATE_DIM)
+
+    def get_param_list(self, params):
+        ret_params = super().get_param_list(params)
+
+        return ret_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        # Save budget data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_theta_data.shape[0]:
+                self.budget_theta_data = np.concatenate([self.budget_theta_data, np.zeros(self.UPDATE_DIM)])
+                self.budget_sigma_data = np.concatenate([self.budget_sigma_data, np.zeros(self.UPDATE_DIM)])
+                self.detJ_data = np.concatenate([self.detJ_data, np.zeros(self.UPDATE_DIM)])
+                self.JplusDetJ_data = np.concatenate([self.JplusDetJ_data, np.zeros(self.UPDATE_DIM)])
+
+            self.budget_theta_data[self.num_updates] = self.budget_theta
+            self.budget_sigma_data[self.num_updates] = self.budget_sigma
+            self.detJ_data[self.num_updates] = utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+            self.JplusDetJ_data[self.num_updates] = self.J + self.detJ_data[self.num_updates]
+
+
+
+    def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
+        data, columns = super().get_traj_data()
+        return np.hstack([data,
+                    self.budget_theta_data[:self.num_updates].reshape(-1, 1),
+                    self.budget_sigma_data[:self.num_updates].reshape(-1, 1),
+                    self.detJ_data[:self.num_updates].reshape(-1, 1),
+                    self.JplusDetJ_data[:self.num_updates].reshape(-1, 1)]), columns + ['BUDGET_THETA', 'BUDGET_SIGMA', 'J_DET', 'J+J_DET']
+
+    def on_theta_update(self, theta, sigma_fun):
+        """Perform a safe update on theta
+        """
+        sigma = sigma_fun.eval()
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+
+
+
+        if self.budget_theta >= -(self.gradK**2)/(4*c):
+            alpha_star = (1 + math.sqrt(1 - (4 * c * (-self.budget_theta))/(self.gradK**2))) / (2 * c)
+        else:
+            alpha_star = 1/(2*c)
+
+        new_theta = theta + alpha_star*self.gradK
+
+        # if self.t > 1:
+        #     self.budget_theta += (utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J)
+        # else:
+        #     self.budget_sigma += (utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J)
+
+        self.budget_theta += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+
+        J_det = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        prev_det = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        self.budget_theta += J_det - prev_det
+
+
+        return new_theta
+
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+
+        # Transfer residual budget from theta to sigma
+        if self.budget_theta > 0:
+            self.budget_sigma += self.budget_theta
+            self.budget_theta = 0
+
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        alphaStar=1/(2*c)
+
+        grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
+        grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
+
+        # Compute the gradient for sigma
+        grad_local_step = (1/2) * self.gradK**2 * grad_sigma_alpha_star
+        grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+        gradDelta = grad_local_step + grad_far_sighted
+        gradDeltaW = gradDelta * math.exp(sigma_fun.param)
+
+
+
+        # assert that the budget is small enough
+        if self.budget_sigma >= -(self.gradW**2)/(4*d):
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-self.budget_sigma))/(self.gradW**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-self.budget_sigma))/(self.gradW**2))) / (2 * d)
+
+            if gradDeltaW / self.gradW >= 0:
+                beta_star = beta_tilde_plus * self.gradW / gradDeltaW
+            else:
+                beta_star = beta_tilde_minus * self.gradW / gradDeltaW
+
+        else:
+            beta_star = 1/(2*d) * self.gradW / gradDeltaW
+
+
+
+        new_sigma_fun = sigma_fun.update(beta_star, gradDeltaW)
+        new_sigma = new_sigma_fun.eval()
+
+        # Improve the budget due to performance improvement
+
+
+        new_j = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B)
+        deltaPerf = new_j - self.J
+
+        self.budget_sigma += deltaPerf
+
+        # print(new_j, self.J, deltaPerf, self.prevDelta, (deltaPerf - self.prevDelta))
+
+        # coeff = math.pow(0.999, self.t) / (1 - 0.999)
+        # self.budget_sigma += coeff*(deltaPerf - self.prevDelta)
+        # self.budget_theta -= coeff*(deltaPerf - self.prevDelta)
+
+        # self.budget_sigma += (deltaPerf - self.prevDelta)
+        # self.budget_theta -= (deltaPerf - self.prevDelta)
+        # self.prevDelta = deltaPerf
+
+
+
+        return new_sigma_fun
+
+
+
+class ExpAlternatingBudget(Experiment):
+    def __init__(self, lqg_environment, exp_name = None):
+        super().__init__(lqg_environment, exp_name)
+        self.budget_theta = 0
+        self.budget_sigma = 0
+
+        self.prevDelta = 0
+
+        self.budget_theta_data = np.zeros(self.UPDATE_DIM)
+        self.budget_sigma_data = np.zeros(self.UPDATE_DIM)
+        self.detJ_data = np.zeros(self.UPDATE_DIM)
+        self.JplusDetJ_data = np.zeros(self.UPDATE_DIM)
+
+    def get_param_list(self, params):
+        ret_params = super().get_param_list(params)
+
+        return ret_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        # Save budget data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_theta_data.shape[0]:
+                self.budget_theta_data = np.concatenate([self.budget_theta_data, np.zeros(self.UPDATE_DIM)])
+                self.budget_sigma_data = np.concatenate([self.budget_sigma_data, np.zeros(self.UPDATE_DIM)])
+                self.detJ_data = np.concatenate([self.detJ_data, np.zeros(self.UPDATE_DIM)])
+                self.JplusDetJ_data = np.concatenate([self.JplusDetJ_data, np.zeros(self.UPDATE_DIM)])
+
+            self.budget_theta_data[self.num_updates] = self.budget_theta
+            self.budget_sigma_data[self.num_updates] = self.budget_sigma
+            self.detJ_data[self.num_updates] = utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+            self.JplusDetJ_data[self.num_updates] = self.J + self.detJ_data[self.num_updates]
+
+
+
+    def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
+        data, columns = super().get_traj_data()
+        return np.hstack([data,
+                    self.budget_theta_data[:self.num_updates].reshape(-1,1),
+                    self.budget_sigma_data[:self.num_updates].reshape(-1,1),
+                    self.detJ_data[:self.num_updates].reshape(-1,1),
+                    self.JplusDetJ_data[:self.num_updates].reshape(-1,1)]), columns + ['BUDGET_THETA', 'BUDGET_SIGMA', 'J_DET', 'J+J_DET']
+
+    def on_theta_update(self, theta, sigma_fun):
+        """Perform a safe update on theta
+        """
+        sigma = sigma_fun.eval()
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        # Transfer residual budget of sigma to theta
+        if self.budget_sigma > 0:
+            self.budget_theta += self.budget_sigma
+            self.budget_sigma = 0
+
+
+        if self.budget_theta >= -(self.gradK**2)/(4*c):
+            alpha_star = (1 + math.sqrt(1 - (4 * c * (-self.budget_theta))/(self.gradK**2))) / (2 * c)
+        else:
+            alpha_star = 1/(2*c)
+
+        new_theta = theta + alpha_star*self.gradK
+
+        # if self.t > 1:
+        #     self.budget_theta += (utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J)
+        # else:
+        #     self.budget_sigma += (utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J)
+
+        self.budget_theta += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+
+        J_det = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        prev_det = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        self.budget_theta += J_det - prev_det
+
+
+        return new_theta
+
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+
+        # Transfer residual budget from theta to sigma
+        if self.budget_theta > 0:
+            self.budget_sigma += self.budget_theta
+            self.budget_theta = 0
+
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        alphaStar=1/(2*c)
+
+        grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
+        grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
+
+        # Compute the gradient for sigma
+        grad_local_step = (1/2) * self.gradK**2 * grad_sigma_alpha_star
+        grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+        gradDelta = grad_local_step + grad_far_sighted
+        gradDeltaW = gradDelta * math.exp(sigma_fun.param)
+
+
+
+        # assert that the budget is small enough
+        if self.budget_sigma >= -(self.gradW**2)/(4*d):
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-self.budget_sigma))/(self.gradW**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-self.budget_sigma))/(self.gradW**2))) / (2 * d)
+
+            if gradDeltaW / self.gradW >= 0:
+                beta_star = beta_tilde_plus * self.gradW / gradDeltaW
+            else:
+                beta_star = beta_tilde_minus * self.gradW / gradDeltaW
+
+        else:
+            beta_star = 1/(2*d) * self.gradW / gradDeltaW
+
+
+
+        new_sigma_fun = sigma_fun.update(beta_star, gradDeltaW)
+        new_sigma = new_sigma_fun.eval()
+
+        # Improve the budget due to performance improvement
+
+
+        new_j = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B)
+        deltaPerf = new_j - self.J
+
+        self.budget_sigma += deltaPerf
+
+        # print(new_j, self.J, deltaPerf, self.prevDelta, (deltaPerf - self.prevDelta))
+
+        # coeff = math.pow(0.999, self.t) / (1 - 0.999)
+        # self.budget_sigma += coeff*(deltaPerf - self.prevDelta)
+        # self.budget_theta -= coeff*(deltaPerf - self.prevDelta)
+
+        # self.budget_sigma += (deltaPerf - self.prevDelta)
+        # self.budget_theta -= (deltaPerf - self.prevDelta)
+        # self.prevDelta = deltaPerf
+
+
+
+        return new_sigma_fun
+
+
+
+
+class ExpSingleBudget(Experiment):
+    def __init__(self, lqg_environment, exp_name=None):
+        super().__init__(lqg_environment, exp_name)
+        self.budget = 0
+
+        self.prevDelta = 0
+
+        self.budget_data = np.zeros(self.UPDATE_DIM)
+        self.detJ_data = np.zeros(self.UPDATE_DIM)
+        self.JplusDetJ_data = np.zeros(self.UPDATE_DIM)
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        """Store budget
+        """
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        # Save budget data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_data.shape[0]:
+                self.budget_data = np.concatenate([self.budget_data, np.zeros(self.UPDATE_DIM)])
+                self.detJ_data = np.concatenate([self.detJ_data, np.zeros(self.UPDATE_DIM)])
+                self.JplusDetJ_data = np.concatenate([self.JplusDetJ_data, np.zeros(self.UPDATE_DIM)])
+
+            self.budget_data[self.num_updates] = self.budget
+            self.detJ_data[self.num_updates] = utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+            self.JplusDetJ_data[self.num_updates] = self.J + self.detJ_data[self.num_updates]
+
+
+
+    def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
+        data, columns = super().get_traj_data()
+        return np.hstack([data,
+                    self.budget_data[:self.num_updates].reshape(-1,1),
+                    self.detJ_data[:self.num_updates].reshape(-1,1),
+                    self.JplusDetJ_data[:self.num_updates].reshape(-1,1)]), columns + ['BUDGET', 'J_DET', 'J+J_DET']
+
+    def on_theta_update(self, theta, sigma_fun):
+        """Perform a safe update on theta
+        """
+        sigma = sigma_fun.eval()
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+
+        if self.budget >= -(self.gradK**2)/(4*c):
+            alpha_star = (1 + math.sqrt(1 - (4 * c * (-self.budget))/(self.gradK**2))) / (2 * c)
+        else:
+            alpha_star = 1/(2*c)
+
+        new_theta = theta + alpha_star*self.gradK
+
+        self.budget += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+
+        J_det = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        prev_det = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        self.budget += J_det - prev_det
+
+
+        return new_theta
+
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        print('gradK', self.gradK, 'gradMixed', self.gradMixed, 'gradW', self.gradW)
+
+        print('c:', c, 'd: ', d)
+        alphaStar=1/(2*c)
+
+        print('alphaStar:', alphaStar)
+
+        grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
+        grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
+
+        print('grad_sigma_alpha_star', grad_sigma_alpha_star, 'grad_sigma_norm_grad_theta: ', grad_sigma_norm_grad_theta)
+
+        # Compute the gradient for sigma
+        grad_local_step = (1/2) * self.gradK**2 * grad_sigma_alpha_star
+        grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+        print('grad_local_step', grad_local_step, 'grad_far_sighted', grad_far_sighted)
+
+        gradDelta = grad_local_step + grad_far_sighted
+        gradDeltaW = gradDelta * math.exp(sigma_fun.param)
+
+        print('gradDelta', gradDelta, 'gradDeltaW', gradDeltaW)
+
+
+
+        # assert that the budget is small enough
+        if self.budget >= -(self.gradW**2)/(4*d):
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+
+            if gradDeltaW / self.gradW >= 0:
+                beta_star = beta_tilde_plus * self.gradW / gradDeltaW
+            else:
+                beta_star = beta_tilde_minus * self.gradW / gradDeltaW
+
+        else:
+            beta_star = 1/(2*d) * self.gradW / gradDeltaW
+
+        print('beta_star', beta_star)
+        new_sigma_fun = sigma_fun.update(beta_star, gradDeltaW)
+        new_sigma = new_sigma_fun.eval()
+
+        # Improve the budget due to performance improvement
+
+        new_j = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B)
+        deltaPerf = new_j - self.J
+
+        self.budget += deltaPerf
+
+
+
+        time.sleep(10000)
+
+        return new_sigma_fun
+
+
+class ExpDiscountedSingleBudget(ExpSingleBudget):
+    def __init__(self, lqg_environment, exp_name=None, discount_coeff=1.0):
+        super().__init__(lqg_environment, exp_name=exp_name)
+        self.discount_coeff = discount_coeff
+
+    def get_param_list(self, params):
+        new_params = super().get_param_list(params)
+        new_params['discount_coeff'] = self.discount_coeff
+
+        return new_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        self.budget *= self.discount_coeff
+        super().on_before_update(current_theta, current_sigma_fun)
+
+class ExpSingleBudgetRandomBaselines(ExpSingleBudget):
+    def __init__(self, lqg_environment, exp_name=None, baseline_prob=0.0):
+        super().__init__(lqg_environment, exp_name=exp_name)
+        self.baseline_prob = baseline_prob
+
+    def get_param_list(self, params):
+        new_params = super().get_param_list(params)
+        new_params['baseline_prob'] = self.baseline_prob
+
+        return new_params
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        if np.random.rand() >= self.baseline_prob:
+            self.budget = 0
+
+        super().on_before_update(current_theta, current_sigma_fun)
 
 
 def generate_filename():
@@ -821,33 +1659,44 @@ def generate_filename():
 
 
 
-
-
 if __name__ == '__main__':
     BASE_FOLDER = 'experiments_long'
     maybe_make_dir(BASE_FOLDER)
 
-    N_ITERATIONS = 2500000
+    N_ITERATIONS = -1
     EPS = 1e-03
     INIT_THETA = -0.1
 
-    gamma_coeffs = [0.99999]
+    #gamma_coeffs = [0, 0.2, 0.4, 0.6, 0.8, 0.99, 0.99999, 1]
+    #gamma_coeffs = [1-1e-12, 1-1e-13, 1-1e-14]
+    # baselines_probs = [0.01, 0.05, 0.1, 0.2, 0.5]
+    # for bprob in baselines_probs:
+    #     l = Exponential(0)
+    #     e = ExpSingleBudgetRandomBaselines(LQG_ENV, "ExpSingleBudgetRandomBaselines", baseline_prob=bprob)
+    #     filename = os.path.join(BASE_FOLDER, generate_filename())
+    #     e.run(theta=INIT_THETA, sigma_fun=l, eps=EPS, verbose=False, two_steps=True, n_iterations=N_ITERATIONS, filename=filename, downsample=5)
+    #
+    # exit()
 
-    for gamma_coeff in gamma_coeffs:
-        e = ExpSafeConstraintBudget(LQG_ENV, "ExpSafeConstraintBudget_new", gamma_coeff=gamma_coeff)
-        filename = os.path.join(BASE_FOLDER, generate_filename())
-        print("Running experiment: ExpSafeConstraintBudget_new(gamma_coeff={})".format(gamma_coeff))
-        e.run(theta=INIT_THETA, sigma_fun=Exponential(0), eps=EPS, verbose=False, two_steps=True, n_iterations=N_ITERATIONS, filename=filename)
+
+    l = Exponential(math.log(1))
+    e = ExpSingleBudget(LQG_ENV, "ExpSingleBudget")
+    filename = os.path.join(BASE_FOLDER, generate_filename())
+    e.run(theta=-0.1, sigma_fun=l, eps=EPS, verbose=False, two_steps=True, n_iterations=N_ITERATIONS, filename=None, downsample=5)
 
     exit()
 
-
-    # l = Exponential(0)
-    # e = ExpSafeConstraintBudgetFork(LQG_ENV, "ExpSafeConstraintBudgetFork")
-    # filename = os.path.join(BASE_FOLDER, generate_filename())
-    # e.run(theta=INIT_THETA, sigma_fun=l, eps=EPS, verbose=True, two_steps=False, n_iterations=N_ITERATIONS, filename=filename, downsample=1)
+    # for alpha_coeff in [0]:
+    #     for beta_coeff in [1]:
+    #         if alpha_coeff + beta_coeff > 1:
+    #             continue
+    #         l = Exponential(math.log(1.5))
+    #         e = ExpThetaAndSigmaBudget(LQG_ENV, "ExpThetaAndSigmaBudget", alpha_coeff=alpha_coeff, beta_coeff=beta_coeff)
+    #         filename = os.path.join(BASE_FOLDER, generate_filename())
+    #         e.run(theta=INIT_THETA, sigma_fun=l, eps=EPS, verbose=True, two_steps=True, n_iterations=N_ITERATIONS, filename=filename, downsample=1)
     #
     # exit()
+
     #
     # l = Exponential(0)
     # e = ExplorationBudget(LQG_ENV, "ExplorationBudget_Taylor6")
