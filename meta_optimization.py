@@ -160,28 +160,28 @@ class BudgetMetaSelector(object):
     def __init__(self):
         pass
 
-    def select_alpha(self, policy, gradients, tp, N_old, iteration, budget):
+    def select_alpha(self, policy, gradients, tp, N1, iteration, budget):
         """Perform a safe update on theta
         """
         sigma = policy.sigma
         c = policy.penaltyCoeff(tp.R, tp.M, tp.gamma, tp.volume)
 
-        if budget >= -(gradients['grad_theta']**2)/(4*c):
-            alpha_star = (1 + math.sqrt(1 - (4 * c * (-budget))/(gradients['grad_theta']**2))) / (2 * c)
+        if budget / N1 >= -(gradients['grad_theta']**2)/(4*c):
+            alpha_star = (1 + math.sqrt(1 - (4 * c * (-budget / N1))/(gradients['grad_theta']**2))) / (2 * c)
         else:
             alpha_star = 1/(2*c)
 
-        return alpha_star,N_old,False
+        return alpha_star,N1,False
 
-    def select_beta(self, policy, gradients, tp, N_old, iteration, budget):
+    def select_beta(self, policy, gradients, tp, N3, iteration, budget):
         sigma = policy.sigma
 
         d = policy.penaltyCoeffSigma(tp.R, tp.M, tp.gamma, tp.volume)
 
         # assert that the budget is small enough
-        if budget >= -(gradients['grad_w']**2)/(4*d):
-            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-budget))/(gradients['grad_w']**2))) / (2 * d)
-            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-budget))/(gradients['grad_w']**2))) / (2 * d)
+        if budget / N3 >= -(gradients['grad_w']**2)/(4*d):
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-budget/N3))/(gradients['grad_w']**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-budget/N3))/(gradients['grad_w']**2))) / (2 * d)
 
             if gradients['gradDeltaW'] / gradients['grad_w'] >= 0:
                 beta_star = beta_tilde_plus * gradients['grad_w'] / gradients['gradDeltaW']
@@ -193,7 +193,7 @@ class BudgetMetaSelector(object):
 
 
 
-        return beta_star,N_old,False
+        return beta_star,N3,False
 
 class VanishingMeta(MetaSelector):
     def __init__(self,alpha,N,alpha_exp=0.5,N_exp = 0):

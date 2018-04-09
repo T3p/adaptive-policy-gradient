@@ -50,6 +50,11 @@ def range_unlimited(r=-1):
 def generate_filename():
     return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(15))
 
+def split_batch_sizes(batch_size, n):
+    r = batch_size // n
+    r2 = batch_size - (n-1)*r
+
+    return [r] * (n-1) + [r2]
 
 #
 #   LQG SCALAR SPECIFIC FUNCTIONS

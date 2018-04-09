@@ -8,8 +8,9 @@ import utils
 import adaptive_exploration
 import math
 
+import argparse
 
-def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),parallel=True,filename='record.h5',verbose=True):
+def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),parallel=True,verbose=True, name='', batch_size=100, max_iters = 10000):
     #Task
     meta_selector = BudgetMetaSelector()
     env = gym.make('LQG1D-v0')
@@ -44,10 +45,10 @@ def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),pa
     #Constraints
     constr = OptConstr(
                 delta = 0.1,
-                N_min=100,
+                N_min=batch_size,
                 N_max=500000,
                 N_tot = 30000000,
-                max_iter = 10000
+                max_iter = max_iters
     )
 
     #Evaluation of expected performance
@@ -55,7 +56,7 @@ def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),pa
         return env.computeJ(pol.theta_mat,pol.cov)
 
     #Run
-    exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate)
+    exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
 
     exp.run(pol, local, parallel, verbose=verbose, filename='experiments_non_exact/' + utils.generate_filename())
 
@@ -64,4 +65,12 @@ if __name__ == '__main__':
     #run(estimator_name = 'gpomdp', meta_selector = VanishingMeta(1e-3,100), parallel = False)
 
     #Adabatch
-    run(parallel = False)
+    parser = argparse.ArgumentParser(description='Launch safe budget experiments')
+    parser.add_argument('--parallel', dest='parallel', default=False, help='Launch parallel',  action='store_true')
+    parser.add_argument('--verbose', dest='verbose',  default=False, help='Verbose', action='store_true')
+    parser.add_argument('--name', dest='name',default='Exp Budget', help='Identifier for the experiment')
+    parser.add_argument('--batch_size', dest='batch_size', default=100, type=int, help='Specify batch size')
+    parser.add_argument('--max_iters', dest='max_iters', default=2000, type=int, help='Maximum number of iterations')
+
+    args = parser.parse_args()
+    run(parallel = ags.parallel, name=args.name, verbose=args.verbose, batch_size=args.batch_size, max_iters=args.max_iters)

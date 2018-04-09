@@ -135,7 +135,6 @@ class ExpGaussPolicy(GaussPolicy):
     def __init__(self,theta,w):
         assert(np.isscalar(w))
         self.w = w
-        print("W = ", w, " exp(w) = ", np.exp(w))
         super().__init__(theta, np.exp(w))
 
     def update_w(self, deltaW):
