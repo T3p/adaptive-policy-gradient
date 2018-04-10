@@ -7,10 +7,20 @@ from policies import GaussPolicy, ExpGaussPolicy
 import utils
 import adaptive_exploration
 import math
+import os
+
+from utils import maybe_make_dir
 
 import argparse
 
-def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),parallel=True,verbose=True, name='', batch_size=100, max_iters = 10000):
+def run(estimator_name='gpomdp',
+        meta_selector=VanishingMeta(alpha=1e-4,N=100),
+        parallel=True,
+        verbose=True,
+        name='',
+        batch_size=100,
+        max_iters = 10000,
+        filepath='experiments'):
     #Task
     meta_selector = BudgetMetaSelector()
     env = gym.make('LQG1D-v0')
@@ -58,7 +68,8 @@ def run(estimator_name='gpomdp',meta_selector=VanishingMeta(alpha=1e-4,N=100),pa
     #Run
     exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
 
-    exp.run(pol, local, parallel, verbose=verbose, filename='experiments_non_exact/' + utils.generate_filename())
+    maybe_make_dir(filepath)
+    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, utils.generate_filename()))
 
 if __name__ == '__main__':
     #Vanilla
@@ -71,6 +82,7 @@ if __name__ == '__main__':
     parser.add_argument('--name', dest='name',default='Exp Budget', help='Identifier for the experiment')
     parser.add_argument('--batch_size', dest='batch_size', default=100, type=int, help='Specify batch size')
     parser.add_argument('--max_iters', dest='max_iters', default=2000, type=int, help='Maximum number of iterations')
+    parser.add_argument('--filepath', dest='filepath', default='experiments', type=str, help='Where to save the data')
 
     args = parser.parse_args()
-    run(parallel = ags.parallel, name=args.name, verbose=args.verbose, batch_size=args.batch_size, max_iters=args.max_iters)
+    run(parallel = args.parallel, name=args.name, verbose=args.verbose, batch_size=args.batch_size, max_iters=args.max_iters, filepath=args.filepath)
