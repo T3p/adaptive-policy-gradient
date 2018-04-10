@@ -43,7 +43,7 @@ def run(estimator_name='gpomdp',
 
     #Policy
     theta_0 = -0.1
-    w = math.log(1)#math.log(env.sigma_controller)
+    w = math.log(0.01)#math.log(env.sigma_controller)
     pol = ExpGaussPolicy(theta_0,w)
 
     #Features
@@ -66,7 +66,7 @@ def run(estimator_name='gpomdp',
         return env.computeJ(pol.theta_mat,pol.cov)
 
     #Run
-    exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
+    exp = adaptive_exploration.SafeExperimentSemiDetPolicy(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
 
     maybe_make_dir(filepath)
     exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, utils.generate_filename()))

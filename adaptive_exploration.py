@@ -1,5 +1,6 @@
 #parallelism
 import sys
+import policies
 import gym
 import lqg1d
 from joblib import Parallel,delayed
@@ -40,15 +41,13 @@ def trajectory(env,tp,pol,feature_fun,traces,n,initial=None,noises=[], determini
 
 #Trajectory (can be run in parallel)
 def trajectory_parallel(tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False):
-    if  len(noises)==0:
-        noises = np.random.normal(0,1,tp.H)
-
     p = multiprocessing.current_process()
     traces = np.zeros((batch_size, tp.H, pol.feat_dim + pol.act_dim + 1))
 
     # s = env.reset([-3.5])
     for n in range(batch_size):
         s = p.env.reset(initial)
+        noises = np.random.normal(0,1,tp.H)
         for l in range(tp.H):
             phi = feature_fun(np.ravel(s))
             a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
@@ -111,7 +110,7 @@ class Experiment(object):
 
 
 
-    def __get_trajectories(self, policy, batch_size, parallel=True, deterministic=False):
+    def _get_trajectories(self, policy, batch_size, parallel=True, deterministic=False):
         if parallel:
             args = [[self.task_prop, policy, self.feature_fun, b, None, [], deterministic] for b in split_batch_sizes(batch_size, self.n_cores)]
             traces = np.concatenate(self.pool.starmap(trajectory_parallel, args))
@@ -135,7 +134,7 @@ class Experiment(object):
 
         Returns: the performance of the Policy
         """
-        _, _, rewards = self.__get_trajectories(policy, N, parallel=parallel, deterministic=deterministic)
+        _, _, rewards = self._get_trajectories(policy, N, parallel=parallel, deterministic=deterministic)
         J_hat = performance(rewards, self.task_prop.gamma, average=False)
 
         if get_min:
@@ -177,7 +176,7 @@ class Experiment(object):
 
         # Compute baseline
 
-        features, actions, rewards = self.__get_trajectories(policy, N, parallel=parallel)
+        features, actions, rewards = self._get_trajectories(policy, N, parallel=parallel)
         self.task_prop.update(features, actions, rewards, use_local_stats)
         estimator.update(self.task_prop)
 
@@ -198,7 +197,7 @@ class Experiment(object):
 
             # PERFORM FIRST STEP
             #Collect trajectories of stochastic policy
-            features, actions, rewards = self.__get_trajectories(policy, N1, parallel=parallel)
+            features, actions, rewards = self._get_trajectories(policy, N1, parallel=parallel)
             self.task_prop.update(features, actions, rewards, use_local_stats)
             estimator.update(self.task_prop)
 
@@ -236,7 +235,7 @@ class Experiment(object):
 
 
             # PERFORM THIRD STEP
-            features, actions, rewards = self.__get_trajectories(policy, N3, parallel=parallel)
+            features, actions, rewards = self._get_trajectories(policy, N3, parallel=parallel)
             self.task_prop.update(features, actions, rewards, use_local_stats)
             estimator.update(self.task_prop)
 
@@ -313,6 +312,553 @@ class Experiment(object):
 
     def __str__(self):
         return self.name
+
+
+class SafeExperiment(Experiment):
+    def run(self,
+            policy,
+            use_local_stats=False,  # Update task prop only with local stats
+            parallel=True,
+            filename=generate_filename(),
+            verbose=False):
+
+        initial_configuration = self.get_param_list(locals())
+        estimator = Estimators(self.task_prop)
+        SIGMA_0 = policy.sigma
+
+        N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
+        N1, N2, N3 = self.split_trajectory_count(N)
+
+        #Multiprocessing preparation
+        if parallel:
+            q = multiprocessing.Queue()
+            for i in range(self.n_cores):
+                q.put(seeding.create_seed())
+
+            self.pool = multiprocessing.Pool(self.n_cores, initializer=process_initializer, initargs=(q,))
+
+        #Initial print
+        if verbose:
+            print(self.meta_selector)
+            print('Start Experiment')
+            print()
+
+        # Compute baseline
+
+        features, actions, rewards = self._get_trajectories(policy, N, parallel=parallel)
+        self.task_prop.update(features, actions, rewards, use_local_stats)
+        estimator.update(self.task_prop)
+
+        prevJ = performance(rewards, self.task_prop.gamma)
+        gradients = estimator.estimate(features, actions, rewards, policy)
+
+        prev_grad_theta_low_variance = gradients['grad_theta']
+        prevJ_det = prevJ
+
+
+        #Learning
+        iteration = 0
+        N_tot = 0
+        while iteration < self.constr.max_iter:
+            iteration+=1
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            #Collect trajectories of stochastic policy
+            features, actions, rewards = self._get_trajectories(policy, N1, parallel=parallel)
+            self.task_prop.update(features, actions, rewards, use_local_stats)
+            estimator.update(self.task_prop)
+
+            if iteration > 1:
+                J_hat = performance(rewards, self.task_prop.gamma)
+                self.budget += N1*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ = J_hat
+
+
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE THETA STEP
+
+            #Print before
+            if verbose:
+                print('Epoch: ', iteration,  ' N =', N,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+
+            #Gradient statistics
+            gradients = estimator.estimate(features, actions, rewards, policy)
+
+            alpha, N3, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N3, iteration, self.budget)
+            policy.update(alpha * gradients['grad_theta'])
+
+
+
+            # PERFORM SECOND STEP
+            # J(theta', sigma) - J(theta, sigma) >= (alpha - c*alpha^2) grad_theta^2
+
+            policy_low_variance = policies.ExpGaussPolicy(np.copy(policy.theta_mat), math.log(SIGMA_0))
+            alpha_tilde = alpha * gradients['grad_theta'] / prev_grad_theta_low_variance
+
+            c = policy_low_variance.penaltyCoeff(self.task_prop.R,self.task_prop.M,self.task_prop.gamma,self.task_prop.volume)
+
+
+            bound_delta_theta = (alpha_tilde - c * (alpha_tilde**2))*prev_grad_theta_low_variance**2
+            N2_min = 0
+            N2_max = N//3
+
+            if bound_delta_theta > 0:
+                print("N2 >= ", -self.budget / bound_delta_theta)
+                N2_min = max(N2_min, -self.budget / bound_delta_theta)
+            else:
+                print("N2 <= ", self.budget / (-bound_delta_theta))
+                N2_max = min(N2_max, self.budget / (-bound_delta_theta))
+
+            if N2_min <= N2_max and N2_max > 0:
+                N2 = math.floor(N2_max)
+                print("N2 = ", N2, '\n\n')
+
+                if (self.budget <= 0):
+                    print("Even with negative budget!!!\n\n\n\n\n\n")
+
+            # if (alpha_tilde - c * (alpha_tilde**2))*prev_grad_theta_low_variance**2 >= -self.budget / N2:
+                # print("\n\n\nESEGUITO!!\n\n\n")
+                # input()
+                features, actions, rewards = self._get_trajectories(policy_low_variance, N2, parallel=parallel)
+                self.task_prop.update(features, actions, rewards, use_local_stats)
+                estimator.update(self.task_prop)
+
+                J_hat = performance(rewards, self.task_prop.gamma)
+
+                self.budget += N2*(J_hat - prevJ_det)            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ_det = J_hat
+
+
+                gradients = estimator.estimate(features, actions, rewards, policy_low_variance)
+                prev_grad_theta_low_variance = gradients['grad_theta']
+
+            #Print before
+            if verbose:
+                print('AFTER EVALUATION 2: Epoch: ', iteration,  ' N =', N,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+
+            self.make_checkpoint(locals())          # CHECKPOINT AFTER DETERMINISTIC EVALUATION
+
+
+            # PERFORM THIRD STEP
+            features, actions, rewards = self._get_trajectories(policy, N3, parallel=parallel)
+            self.task_prop.update(features, actions, rewards, use_local_stats)
+            estimator.update(self.task_prop)
+
+            J_hat = performance(rewards, self.task_prop.gamma)
+
+
+            self.budget += N3*(J_hat - prevJ)            # B += J(theta', sigma) - J(theta, sigma)
+            prevJ = J_hat
+
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if verbose:
+                print('UPDATING SIGMA: ', iteration,  ' N3 =', N3,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+            #Gradient statistics
+            gradients = estimator.estimate(features, actions, rewards, policy)
+
+            beta, N1, safe = self.meta_selector.select_beta(policy, gradients, self.task_prop, N1, iteration, self.budget)
+            policy.update_w(beta * gradients['gradDeltaW'])
+
+
+            N_old = N
+            #Check if done
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached')
+                print('End experiment')
+                break
+
+            #Print after
+            if verbose:
+                print('alpha =', alpha, 'J_det', prevJ_det,  ' J^ =', J_hat)
+                print('time: ', time.time() - start_time)
+                print()
+
+            def signal_handler(signal, frame):
+                self.pool.terminate()
+                sys.exit(0)
+
+            #Manual stop
+            signal.signal(signal.SIGINT, signal_handler)
+
+        # SAVE DATA
+
+        traj_df = pd.DataFrame(self.data, columns=['T', 'GRAD_THETA', 'GRAD_W', 'GRAD_MIXED', 'GRAD_DELTAW', 'J', 'J_DET', 'J+J_DET', 'ALPHA', 'BETA', 'N', 'THETA', 'SIGMA', 'BUDGET'])
+        traj_df.to_pickle(filename + '.gzip')
+
+        print('initial_configuration: ', initial_configuration.keys())
+        with open(filename + '_params.json', 'w') as f:
+            json.dump({a:str(b) for a,b in initial_configuration.items()}, f)
+
+#Handle Ctrl-C
+# def signal_handler(signal,frame):
+#     sys.exit(0)
+
+
+
+
+class SafeExperimentSemiDetPolicy(Experiment):
+    def run(self,
+            policy,
+            use_local_stats=False,  # Update task prop only with local stats
+            parallel=True,
+            filename=generate_filename(),
+            verbose=False):
+
+        initial_configuration = self.get_param_list(locals())
+        estimator = Estimators(self.task_prop)
+        SIGMA_0 = 0.01
+
+        N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
+        N1, N2, N3 = self.split_trajectory_count(N)
+
+        #Multiprocessing preparation
+        if parallel:
+            q = multiprocessing.Queue()
+            for i in range(self.n_cores):
+                q.put(seeding.create_seed())
+
+            self.pool = multiprocessing.Pool(self.n_cores, initializer=process_initializer, initargs=(q,))
+
+        #Initial print
+        if verbose:
+            print(self.meta_selector)
+            print('Start Experiment')
+            print()
+
+        # Compute baseline
+
+        features, actions, rewards = self._get_trajectories(policy, N, parallel=parallel)
+        self.task_prop.update(features, actions, rewards, use_local_stats)
+        estimator.update(self.task_prop)
+
+        prevJ = performance(rewards, self.task_prop.gamma)
+        gradients = estimator.estimate(features, actions, rewards, policy)
+
+        prev_grad_theta_low_variance = gradients['grad_theta']
+        prevJ_det = prevJ
+
+
+        #Learning
+        iteration = 0
+        N_tot = 0
+        while iteration < self.constr.max_iter:
+            iteration+=1
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            #Collect trajectories of stochastic policy
+            features, actions, rewards = self._get_trajectories(policy, N1, parallel=parallel)
+            self.task_prop.update(features, actions, rewards, use_local_stats)
+            estimator.update(self.task_prop)
+
+            if iteration > 1:
+                J_hat = performance(rewards, self.task_prop.gamma)
+                self.budget += N1*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ = J_hat
+
+
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE THETA STEP
+
+            #Print before
+            if verbose:
+                print('Epoch: ', iteration,  ' N =', N,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+
+            #Gradient statistics
+            gradients = estimator.estimate(features, actions, rewards, policy)
+
+            alpha, N3, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N3, iteration, self.budget)
+            policy.update(alpha * gradients['grad_theta'])
+
+
+
+            # PERFORM SECOND STEP
+            # J(theta', sigma) - J(theta, sigma) >= (alpha - c*alpha^2) grad_theta^2
+
+            policy_low_variance = policies.ExpGaussPolicy(np.copy(policy.theta_mat), math.log(SIGMA_0))
+            alpha_tilde = alpha * gradients['grad_theta'] / prev_grad_theta_low_variance
+
+            c = policy_low_variance.penaltyCoeff(self.task_prop.R,self.task_prop.M,self.task_prop.gamma,self.task_prop.volume)
+
+
+            bound_delta_theta = (alpha_tilde - c * (alpha_tilde**2))*prev_grad_theta_low_variance**2
+            N2_min = 0
+            N2_max = N//3
+
+            if bound_delta_theta > 0:
+                print("N2 >= ", -self.budget / bound_delta_theta)
+                N2_min = max(N2_min, -self.budget / bound_delta_theta)
+            else:
+                print("N2 <= ", self.budget / (-bound_delta_theta))
+                N2_max = min(N2_max, self.budget / (-bound_delta_theta))
+
+            if N2_min <= N2_max and N2_max > 0:
+                N2 = math.floor(N2_max)
+                print("N2 = ", N2, '\n\n')
+
+                if (self.budget <= 0):
+                    print("Even with negative budget!!!\n\n\n\n\n\n")
+
+            # if (alpha_tilde - c * (alpha_tilde**2))*prev_grad_theta_low_variance**2 >= -self.budget / N2:
+                # print("\n\n\nESEGUITO!!\n\n\n")
+                # input()
+                features, actions, rewards = self._get_trajectories(policy_low_variance, N2, parallel=parallel)
+                self.task_prop.update(features, actions, rewards, use_local_stats)
+                estimator.update(self.task_prop)
+
+                J_hat = performance(rewards, self.task_prop.gamma)
+
+                self.budget += N2*(J_hat - prevJ_det)            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ_det = J_hat
+
+
+                gradients = estimator.estimate(features, actions, rewards, policy_low_variance)
+                prev_grad_theta_low_variance = gradients['grad_theta']
+
+            #Print before
+            if verbose:
+                print('AFTER EVALUATION 2: Epoch: ', iteration,  ' N =', N,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+
+            self.make_checkpoint(locals())          # CHECKPOINT AFTER DETERMINISTIC EVALUATION
+
+
+            # PERFORM THIRD STEP
+            features, actions, rewards = self._get_trajectories(policy, N3, parallel=parallel)
+            self.task_prop.update(features, actions, rewards, use_local_stats)
+            estimator.update(self.task_prop)
+
+            J_hat = performance(rewards, self.task_prop.gamma)
+
+
+            self.budget += N3*(J_hat - prevJ)            # B += J(theta', sigma) - J(theta, sigma)
+            prevJ = J_hat
+
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if verbose:
+                print('UPDATING SIGMA: ', iteration,  ' N3 =', N3,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+            #Gradient statistics
+            gradients = estimator.estimate(features, actions, rewards, policy)
+
+            beta, N1, safe = self.meta_selector.select_beta(policy, gradients, self.task_prop, N1, iteration, self.budget)
+            policy.update_w(beta * gradients['gradDeltaW'])
+
+
+            N_old = N
+            #Check if done
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached')
+                print('End experiment')
+                break
+
+            #Print after
+            if verbose:
+                print('alpha =', alpha, 'J_det', prevJ_det,  ' J^ =', J_hat)
+                print('time: ', time.time() - start_time)
+                print()
+
+            def signal_handler(signal, frame):
+                self.pool.terminate()
+                sys.exit(0)
+
+            #Manual stop
+            signal.signal(signal.SIGINT, signal_handler)
+
+        # SAVE DATA
+
+        traj_df = pd.DataFrame(self.data, columns=['T', 'GRAD_THETA', 'GRAD_W', 'GRAD_MIXED', 'GRAD_DELTAW', 'J', 'J_DET', 'J+J_DET', 'ALPHA', 'BETA', 'N', 'THETA', 'SIGMA', 'BUDGET'])
+        traj_df.to_pickle(filename + '.gzip')
+
+        print('initial_configuration: ', initial_configuration.keys())
+        with open(filename + '_params.json', 'w') as f:
+            json.dump({a:str(b) for a,b in initial_configuration.items()}, f)
+
+#Handle Ctrl-C
+# def signal_handler(signal,frame):
+#     sys.exit(0)
+
+
+
+
+class SafeExperiment2(Experiment):
+    def run(self,
+            policy,
+            use_local_stats=False,  # Update task prop only with local stats
+            parallel=True,
+            filename=generate_filename(),
+            verbose=False):
+
+        initial_configuration = self.get_param_list(locals())
+        estimator = Estimators(self.task_prop)
+        SIGMA_0 = policy.sigma
+
+        N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
+        N1, N2, N3 = self.split_trajectory_count(N)
+
+        #Multiprocessing preparation
+        if parallel:
+            q = multiprocessing.Queue()
+            for i in range(self.n_cores):
+                q.put(seeding.create_seed())
+
+            self.pool = multiprocessing.Pool(self.n_cores, initializer=process_initializer, initargs=(q,))
+
+        #Initial print
+        if verbose:
+            print(self.meta_selector)
+            print('Start Experiment')
+            print()
+
+        # Compute baseline
+
+        features, actions, rewards = self._get_trajectories(policy, N, parallel=parallel)
+        self.task_prop.update(features, actions, rewards, use_local_stats)
+        estimator.update(self.task_prop)
+
+        prevJ = performance(rewards, self.task_prop.gamma)
+        gradients = estimator.estimate(features, actions, rewards, policy)
+
+        prev_grad_theta_low_variance = gradients['grad_theta']
+        prevJ_det = prevJ
+
+        print('Current J: ', prevJ_det)
+
+
+        #Learning
+        iteration = 0
+        N_tot = 0
+        while iteration < self.constr.max_iter:
+            iteration+=1
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            #Collect trajectories of stochastic policy
+            features, actions, rewards = self._get_trajectories(policy, N1, parallel=parallel)
+            self.task_prop.update(features, actions, rewards, use_local_stats)
+            estimator.update(self.task_prop)
+
+            print('Epoch: ', iteration, ' performance: ', performance(rewards, self.task_prop.gamma))
+
+            if iteration > 1:
+                J_hat = performance(rewards, self.task_prop.gamma)
+                self.budget += N1*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ = J_hat
+
+
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE THETA STEP
+
+            #Print before
+            if verbose:
+                print('Epoch: ', iteration,  ' N =', N,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+
+            #Gradient statistics
+            gradients = estimator.estimate(features, actions, rewards, policy)
+
+            alpha, N3, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N3, iteration, self.budget)
+            policy.update(alpha * gradients['grad_theta'])
+
+
+
+            # PERFORM SECOND STEP
+            # J(theta', sigma) - J(theta, sigma) >= (alpha - c*alpha^2) grad_theta^2
+
+            policy_low_variance = policies.ExpGaussPolicy(np.copy(policy.theta_mat), math.log(SIGMA_0))
+            # print('gradK', gradients['grad_theta'], 'prevgrad', prev_grad_theta_low_variance)
+            alpha_tilde = alpha * gradients['grad_theta'] / prev_grad_theta_low_variance
+            # alpha_tilde = alpha
+
+            c = policy_low_variance.penaltyCoeff(self.task_prop.R,self.task_prop.M,self.task_prop.gamma,self.task_prop.volume)
+            # print("alpha:", alpha)
+            # print("c:", c, "a_tilde:", alpha_tilde, "first:", (alpha_tilde - c * (alpha_tilde**2))*prev_grad_theta_low_variance**2, "second:", -self.budget / N2, "grad:",prev_grad_theta_low_variance)
+            # input()
+            t = (alpha_tilde - c * (alpha_tilde**2))*prev_grad_theta_low_variance**2
+            if t > 0:
+                print("N2 >= ", -self.budget / t)
+                N2 = min(max(0, math.floor(-self.budget / t)), N//3)
+            else:
+                print("N2 <= ", self.budget / (-t))
+                N2 = max(min(N//3, math.floor(self.budget / (-t))), 0)
+            print("N2 = ", N2)
+
+            if (alpha_tilde - c * (alpha_tilde**2))*prev_grad_theta_low_variance**2 >= -self.budget / N2:
+                # print("\n\n\nESEGUITO!!\n\n\n")
+                # input()
+                features, actions, rewards = self._get_trajectories(policy_low_variance, N2, parallel=parallel)
+                self.task_prop.update(features, actions, rewards, use_local_stats)
+                estimator.update(self.task_prop)
+
+                J_hat = performance(rewards, self.task_prop.gamma)
+                print("IN SECOND STEP: performance:", J_hat)
+                self.budget += N2*(J_hat - prevJ_det)            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ_det = J_hat
+
+
+                gradients = estimator.estimate(features, actions, rewards, policy_low_variance)
+                prev_grad_theta_low_variance = gradients['grad_theta']
+
+            #Print before
+            if verbose:
+                print('AFTER EVALUATION 2: Epoch: ', iteration,  ' N =', N,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+
+            self.make_checkpoint(locals())          # CHECKPOINT AFTER DETERMINISTIC EVALUATION
+
+
+            # PERFORM THIRD STEP
+            features, actions, rewards = self._get_trajectories(policy, N3, parallel=parallel)
+            self.task_prop.update(features, actions, rewards, use_local_stats)
+            estimator.update(self.task_prop)
+
+            J_hat = performance(rewards, self.task_prop.gamma)
+
+
+            self.budget += N3*(J_hat - prevJ)            # B += J(theta', sigma) - J(theta, sigma)
+            prevJ = J_hat
+
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if verbose:
+                print('UPDATING SIGMA: ', iteration,  ' N3 =', N3,  ' theta =', policy.get_theta(), ' sigma =', policy.sigma, ' budget =', self.budget / N)
+            #Gradient statistics
+            gradients = estimator.estimate(features, actions, rewards, policy)
+
+            beta, N1, safe = self.meta_selector.select_beta(policy, gradients, self.task_prop, N1, iteration, self.budget)
+            policy.update_w(beta * gradients['gradDeltaW'])
+
+
+            input()
+
+
+            N_old = N
+            #Check if done
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached')
+                print('End experiment')
+                break
+
+            #Print after
+            if verbose:
+                print('alpha =', alpha, 'J_det', prevJ_det,  ' J^ =', J_hat)
+                print('time: ', time.time() - start_time)
+                print()
+
+            def signal_handler(signal, frame):
+                self.pool.terminate()
+                sys.exit(0)
+
+            #Manual stop
+            signal.signal(signal.SIGINT, signal_handler)
+
+        # SAVE DATA
+
+        traj_df = pd.DataFrame(self.data, columns=['T', 'GRAD_THETA', 'GRAD_W', 'GRAD_MIXED', 'GRAD_DELTAW', 'J', 'J_DET', 'J+J_DET', 'ALPHA', 'BETA', 'N', 'THETA', 'SIGMA', 'BUDGET'])
+        traj_df.to_pickle(filename + '.gzip')
+
+        print('initial_configuration: ', initial_configuration.keys())
+        with open(filename + '_params.json', 'w') as f:
+            json.dump({a:str(b) for a,b in initial_configuration.items()}, f)
 
 #Handle Ctrl-C
 # def signal_handler(signal,frame):
