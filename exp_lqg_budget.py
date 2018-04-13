@@ -29,16 +29,16 @@ AVAILABLE_EXPERIMENTS = {
 
 
 
-def run(estimator_name='gpomdp',
-        meta_selector=BudgetMetaSelector(),
-        parallel=True,
-        verbose=True,
+def run(experiment_class='Experiment',
         name='',
         batch_size=100,
         max_iters = 10000,
         filepath='experiments',
         random_seed = 0,
-        experiment_class='Experiment'):
+        parallel=False,
+        verbose=False,
+        ):
+    print(experiment_class, name, batch_size, max_iters, random_seed)
     #Task
     meta_selector = BudgetMetaSelector()
     env = gym.make('LQG1D-v0')
@@ -93,11 +93,11 @@ def run(estimator_name='gpomdp',
     maybe_make_dir(filepath)
     exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, utils.generate_filename()))
 
+
+
 if __name__ == '__main__':
     #Vanilla
     #run(estimator_name = 'gpomdp', meta_selector = VanishingMeta(1e-3,100), parallel = False)
-
-
 
     #Adabatch
     parser = argparse.ArgumentParser(description='Launch safe budget experiments')
