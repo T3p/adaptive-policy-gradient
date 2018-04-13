@@ -9,18 +9,36 @@ import adaptive_exploration
 import math
 import os
 
+from gym.utils import seeding
+
 from utils import maybe_make_dir
 
 import argparse
 
+
+AVAILABLE_EXPERIMENTS = {
+        'MonotonicOnlyTheta' : adaptive_exploration.MonotonicOnlyTheta,
+        'MonotonicThetaAndSigma' : adaptive_exploration.MonotonicThetaAndSigma,
+        'MonotonicZeroBudgetEveryStep' : adaptive_exploration.MonotonicZeroBudgetEveryStep,
+        'NoWorseThanBaselineEveryStep' : adaptive_exploration.NoWorseThanBaselineEveryStep,
+        'ExpBudget_NoDetPolicy' : adaptive_exploration.ExpBudget_NoDetPolicy,
+        'ExpBudget_SemiDetPolicy' : adaptive_exploration.ExpBudget_SemiDetPolicy,
+        'ExpBudget_DetPolicy' : adaptive_exploration.ExpBudget_DetPolicy,
+        'SimultaneousThetaAndSigma' : adaptive_exploration.SimultaneousThetaAndSigma
+    }
+
+
+
 def run(estimator_name='gpomdp',
-        meta_selector=VanishingMeta(alpha=1e-4,N=100),
+        meta_selector=BudgetMetaSelector(),
         parallel=True,
         verbose=True,
         name='',
         batch_size=100,
         max_iters = 10000,
-        filepath='experiments'):
+        filepath='experiments',
+        random_seed = 0,
+        experiment_class='Experiment'):
     #Task
     meta_selector = BudgetMetaSelector()
     env = gym.make('LQG1D-v0')
@@ -43,30 +61,34 @@ def run(estimator_name='gpomdp',
 
     #Policy
     theta_0 = -0.1
-    w = math.log(0.01)#math.log(env.sigma_controller)
+    w = math.log(1)#math.log(env.sigma_controller)
     pol = ExpGaussPolicy(theta_0,w)
 
     #Features
     feature_fun = utils.identity
 
-    #Gradient estimation
-    grad_estimator = Estimator(estimator_name)
-
     #Constraints
     constr = OptConstr(
-                delta = 0.1,
+                delta = 0.2,
                 N_min=batch_size,
                 N_max=500000,
                 N_tot = 30000000,
-                max_iter = max_iters
+                max_iter = max_iters,
+                approximate_gradients=False
     )
 
     #Evaluation of expected performance
-    def evaluate(pol,rewards):
-        return env.computeJ(pol.theta_mat,pol.cov)
+    def evaluate(pol,deterministic=False):
+        var = 0 if deterministic else pol.cov
+        return env.computeJ(pol.theta_mat,var)
 
     #Run
-    exp = adaptive_exploration.SafeExperimentSemiDetPolicy(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
+    # exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
+    # exp = adaptive_exploration.CollectDataExperiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
+    # exp = adaptive_exploration.SafeExperiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name, random_seed=random_seed)
+
+    experiment = AVAILABLE_EXPERIMENTS[experiment_class]
+    exp = experiment(env, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed)
 
     maybe_make_dir(filepath)
     exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, utils.generate_filename()))
@@ -74,6 +96,8 @@ def run(estimator_name='gpomdp',
 if __name__ == '__main__':
     #Vanilla
     #run(estimator_name = 'gpomdp', meta_selector = VanishingMeta(1e-3,100), parallel = False)
+
+
 
     #Adabatch
     parser = argparse.ArgumentParser(description='Launch safe budget experiments')
@@ -83,6 +107,9 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', dest='batch_size', default=100, type=int, help='Specify batch size')
     parser.add_argument('--max_iters', dest='max_iters', default=2000, type=int, help='Maximum number of iterations')
     parser.add_argument('--filepath', dest='filepath', default='experiments', type=str, help='Where to save the data')
+    parser.add_argument('--random_seed', dest='random_seed', default=seeding.create_seed(), type=int, help='Random seed')
+    parser.add_argument('--experiment_class', dest='experiment_class', default=list(AVAILABLE_EXPERIMENTS.keys())[0], type=str, help='type of experiment: ' + ', '.join(AVAILABLE_EXPERIMENTS.keys()))
 
     args = parser.parse_args()
-    run(parallel = args.parallel, name=args.name, verbose=args.verbose, batch_size=args.batch_size, max_iters=args.max_iters, filepath=args.filepath)
+
+    run(**vars(args))

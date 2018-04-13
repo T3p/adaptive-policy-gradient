@@ -106,14 +106,14 @@ class GradStats:
 class OptConstr:
     """Constraints on the meta-optimization process"""
 
-    def __init__(self,delta=0.95,N_min=2,N_max=999999,N_tot=30000000,max_iter=30000000):
+    def __init__(self,delta=0.95,N_min=2,N_max=999999,N_tot=30000000,max_iter=30000000, approximate_gradients=True):
         """Parameters:
             delta : maximum allowed worsening probability
             N_min : min allowed batch size
             N_max : max allowed batch size
             N_tot : total number of possible trajectories
         """
-
+        self.approximate_gradients = approximate_gradients
         self.delta = delta
         self.N_min = N_min
         self.N_max = N_max
@@ -160,16 +160,23 @@ class BudgetMetaSelector(object):
     def __init__(self):
         pass
 
-    def select_alpha(self, policy, gradients, tp, N1, iteration, budget):
+    def select_alpha(self, policy, gradients, tp, N1, iteration, budget=None):
         """Perform a safe update on theta
         """
         sigma = policy.sigma
         c = policy.penaltyCoeff(tp.R, tp.M, tp.gamma, tp.volume)
 
-        if budget / N1 >= -(gradients['grad_theta']**2)/(4*c):
-            alpha_star = (1 + math.sqrt(1 - (4 * c * (-budget / N1))/(gradients['grad_theta']**2))) / (2 * c)
+        if budget is None:  # Safe step
+            return gradients['grad_theta_low']**2/(2*c*gradients['grad_theta_high']**2),N1,True
+
+        # if budget / N1 >= -(gradients['grad_theta']**2)/(4*c):
+        if budget/N1 >= -(gradients['grad_theta_low']**4) / (4*c*gradients['grad_theta_high']**2):
+            # alpha_star = (1 + math.sqrt(1 - (4 * c * (-budget / N1))/(gradients['grad_theta']**2))) / (2 * c)
+
+            alpha_star = (gradients['grad_theta_low']**2 + math.sqrt(gradients['grad_theta_low']**4 + 4*c*(budget/N1)*gradients['grad_theta_high']**2)) / (2*c*gradients['grad_theta_high']**2)
         else:
-            alpha_star = 1/(2*c)
+            # alpha_star = 1/(2*c)
+            alpha_star = gradients['grad_theta_low']**2/(2*c*gradients['grad_theta_high']**2)
 
         return alpha_star,N1,False
 
@@ -178,10 +185,17 @@ class BudgetMetaSelector(object):
 
         d = policy.penaltyCoeffSigma(tp.R, tp.M, tp.gamma, tp.volume)
 
+        if budget is None:  # Safe step
+            return gradients['grad_w_low']**2/(2*d*gradients['grad_w_high']**2),N3,True
+
         # assert that the budget is small enough
-        if budget / N3 >= -(gradients['grad_w']**2)/(4*d):
-            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-budget/N3))/(gradients['grad_w']**2))) / (2 * d)
-            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-budget/N3))/(gradients['grad_w']**2))) / (2 * d)
+        #if budget / N3 >= -(gradients['grad_w']**2)/(4*d):
+        if budget/N3 >= -(gradients['grad_w_low']**4) / (4*d*gradients['grad_w_high']**2):
+            # beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-budget/N3))/(gradients['grad_w']**2))) / (2 * d)
+            # beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-budget/N3))/(gradients['grad_w']**2))) / (2 * d)
+
+            beta_tilde_plus = (gradients['grad_w_low']**2 + math.sqrt(gradients['grad_w_low']**4 + 4*d*(budget/N3)*gradients['grad_w_high']**2)) / (2*d*gradients['grad_w_high']**2)
+            beta_tilde_minus = (gradients['grad_w_low']**2 - math.sqrt(gradients['grad_w_low']**4 + 4*d*(budget/N3)*gradients['grad_w_high']**2)) / (2*d*gradients['grad_w_high']**2)
 
             if gradients['gradDeltaW'] / gradients['grad_w'] >= 0:
                 beta_star = beta_tilde_plus * gradients['grad_w'] / gradients['gradDeltaW']
@@ -189,7 +203,8 @@ class BudgetMetaSelector(object):
                 beta_star = beta_tilde_minus * gradients['grad_w'] / gradients['gradDeltaW']
 
         else:
-            beta_star = 1/(2*d) * gradients['grad_w'] / gradients['gradDeltaW']
+            beta_star = gradients['grad_w_low']**2/(2*d*gradients['grad_w_high']**2) * gradients['grad_w'] / gradients['gradDeltaW']
+            # beta_star = 1/(2*d) * gradients['grad_w'] / gradients['gradDeltaW']
 
 
 
