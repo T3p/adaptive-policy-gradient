@@ -2,9 +2,9 @@ import multiprocessing
 from exp_lqg_budget import run, AVAILABLE_EXPERIMENTS
 
 def run_all():
-    BATCH_SIZE = 900
-    MAX_ITERS = 10000
-    FILEPATH = 'EXPERIMENTS_FINAL_1'
+    BATCH_SIZE = 30
+    MAX_ITERS = 25
+    FILEPATH = 'EXPERIMENTS_FINAL_2'
 
     args = []
     for exp_name, _ in AVAILABLE_EXPERIMENTS.items():

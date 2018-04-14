@@ -308,7 +308,7 @@ class MonotonicOnlyTheta(BaseExperiment):
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', J_hat, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 

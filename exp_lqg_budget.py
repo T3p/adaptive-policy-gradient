@@ -74,7 +74,7 @@ def run(experiment_class='Experiment',
                 N_max=500000,
                 N_tot = 30000000,
                 max_iter = max_iters,
-                approximate_gradients=False
+                approximate_gradients=True
     )
 
     #Evaluation of expected performance
@@ -91,7 +91,7 @@ def run(experiment_class='Experiment',
     exp = experiment(env, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed)
 
     maybe_make_dir(filepath)
-    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, utils.generate_filename()))
+    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()))
 
 
 
