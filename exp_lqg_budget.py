@@ -24,7 +24,9 @@ AVAILABLE_EXPERIMENTS = {
         'ExpBudget_NoDetPolicy' : adaptive_exploration.ExpBudget_NoDetPolicy,
         'ExpBudget_SemiDetPolicy' : adaptive_exploration.ExpBudget_SemiDetPolicy,
         'ExpBudget_DetPolicy' : adaptive_exploration.ExpBudget_DetPolicy,
-        'SimultaneousThetaAndSigma' : adaptive_exploration.SimultaneousThetaAndSigma
+        'SimultaneousThetaAndSigma_half' : adaptive_exploration.SimultaneousThetaAndSigma_half,
+        'SimultaneousThetaAndSigma_two_thirds_theta' : adaptive_exploration.SimultaneousThetaAndSigma_two_thirds_theta,
+        'SimultaneousThetaAndSigma_two_thirds_sigma' : adaptive_exploration.SimultaneousThetaAndSigma_two_thirds_sigma
     }
 
 
@@ -90,7 +92,6 @@ def run(experiment_class='Experiment',
     experiment = AVAILABLE_EXPERIMENTS[experiment_class]
     exp = experiment(env, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed)
 
-    maybe_make_dir(filepath)
     exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()))
 
 
@@ -111,5 +112,7 @@ if __name__ == '__main__':
     parser.add_argument('--experiment_class', dest='experiment_class', default=list(AVAILABLE_EXPERIMENTS.keys())[0], type=str, help='type of experiment: ' + ', '.join(AVAILABLE_EXPERIMENTS.keys()))
 
     args = parser.parse_args()
+
+    maybe_make_dir(args.filepath)
 
     run(**vars(args))

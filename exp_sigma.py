@@ -1557,29 +1557,17 @@ class ExpSingleBudget(Experiment):
         c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
         d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
 
-        print('gradK', self.gradK, 'gradMixed', self.gradMixed, 'gradW', self.gradW)
-
-        print('c:', c, 'd: ', d)
         alphaStar=1/(2*c)
-
-        print('alphaStar:', alphaStar)
 
         grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
         grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
-
-        print('grad_sigma_alpha_star', grad_sigma_alpha_star, 'grad_sigma_norm_grad_theta: ', grad_sigma_norm_grad_theta)
 
         # Compute the gradient for sigma
         grad_local_step = (1/2) * self.gradK**2 * grad_sigma_alpha_star
         grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
 
-        print('grad_local_step', grad_local_step, 'grad_far_sighted', grad_far_sighted)
-
         gradDelta = grad_local_step + grad_far_sighted
         gradDeltaW = gradDelta * math.exp(sigma_fun.param)
-
-        print('gradDelta', gradDelta, 'gradDeltaW', gradDeltaW)
-
 
 
         # assert that the budget is small enough
@@ -1595,7 +1583,6 @@ class ExpSingleBudget(Experiment):
         else:
             beta_star = 1/(2*d) * self.gradW / gradDeltaW
 
-        print('beta_star', beta_star)
         new_sigma_fun = sigma_fun.update(beta_star, gradDeltaW)
         new_sigma = new_sigma_fun.eval()
 
@@ -1606,11 +1593,118 @@ class ExpSingleBudget(Experiment):
 
         self.budget += deltaPerf
 
+        return new_sigma_fun
 
 
-        time.sleep(10000)
+class DebugSingleBudget(ExpSingleBudget):
+    def __init__(self, lqg_environment, exp_name=None):
+        super().__init__(lqg_environment, exp_name)
+
+        self.J_journey = np.zeros(self.UPDATE_DIM)
+        self.journey = 0
+
+    def on_before_update(self, current_theta, current_sigma_fun):
+        super().on_before_update(current_theta, current_sigma_fun)
+
+        if self.t == 0:
+            self.journey = 2*utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, current_sigma_fun.eval(), self.M, self.ENV_B) + utils.calc_J(current_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        # Save budget data
+        if self.t % self.downsample == 0:
+            if self.num_updates >= self.budget_data.shape[0]:
+                self.J_journey = np.concatenate([self.J_journey, np.zeros(self.UPDATE_DIM)])
+
+            self.J_journey[self.num_updates] = self.journey
+
+    def on_theta_update(self, theta, sigma_fun):
+        """Perform a safe update on theta
+        """
+        self.journey = 0
+        sigma = sigma_fun.eval()
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+
+        if self.budget >= -(self.gradK**2)/(4*c):
+            alpha_star = (1 + math.sqrt(1 - (4 * c * (-self.budget))/(self.gradK**2))) / (2 * c)
+        else:
+            alpha_star = 1/(2*c)
+
+        new_theta = theta + alpha_star*self.gradK
+
+        self.budget += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B) - self.J
+        self.journey += utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, sigma, self.M, self.ENV_B)
+
+
+        J_det = utils.calc_J(new_theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+        prev_det = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, 0, self.M, self.ENV_B)
+
+        self.budget += J_det - prev_det
+
+        self.journey += J_det
+
+        return new_theta
+
+    def on_sigma_update(self, theta, sigma_fun):
+        assert isinstance(sigma_fun, Exponential)
+
+        sigma = sigma_fun.eval()
+
+        c = utils.computeLoss(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+        d = utils.computeLossSigma(self.MAX_REWARD, self.M, self.ENV_GAMMA, self.ENV_VOLUME, sigma)
+
+        alphaStar=1/(2*c)
+
+        grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (self.m * (self.C2 * sigma + self.C3)**2)
+        grad_sigma_norm_grad_theta = 2 * self.gradK * self.gradMixed
+
+        # Compute the gradient for sigma
+        grad_local_step = (1/2) * self.gradK**2 * grad_sigma_alpha_star
+        grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
+
+        gradDelta = grad_local_step + grad_far_sighted
+        gradDeltaW = gradDelta * math.exp(sigma_fun.param)
+
+
+        # assert that the budget is small enough
+        if self.budget >= -(self.gradW**2)/(4*d):
+            beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+            beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-self.budget))/(self.gradW**2))) / (2 * d)
+
+            if gradDeltaW / self.gradW >= 0:
+                beta_star = beta_tilde_plus * self.gradW / gradDeltaW
+            else:
+                beta_star = beta_tilde_minus * self.gradW / gradDeltaW
+
+        else:
+            beta_star = 1/(2*d) * self.gradW / gradDeltaW
+
+        new_sigma_fun = sigma_fun.update(beta_star, gradDeltaW)
+        new_sigma = new_sigma_fun.eval()
+
+        # Improve the budget due to performance improvement
+
+        new_j = utils.calc_J(theta, self.ENV_Q, self.ENV_R, self.ENV_GAMMA, new_sigma, self.M, self.ENV_B)
+        deltaPerf = new_j - self.J
+
+        self.budget += deltaPerf
+        self.journey += new_j
+
 
         return new_sigma_fun
+
+    def get_traj_data(self):
+        """Returns a matrix containing all the data we want to store
+        """
+        data, columns = super().get_traj_data()
+        return np.hstack([data,
+                    self.J_journey[:self.num_updates].reshape(-1,1)]), columns + ['J_JOURNEY']
+
+
+
+
+
+
+
 
 
 class ExpDiscountedSingleBudget(ExpSingleBudget):
@@ -1660,11 +1754,11 @@ def generate_filename():
 
 
 if __name__ == '__main__':
-    BASE_FOLDER = 'experiments_long'
+    BASE_FOLDER = 'prova'
     maybe_make_dir(BASE_FOLDER)
 
-    N_ITERATIONS = -1
-    EPS = 1e-03
+    N_ITERATIONS = 2000
+    EPS = 0
     INIT_THETA = -0.1
 
     #gamma_coeffs = [0, 0.2, 0.4, 0.6, 0.8, 0.99, 0.99999, 1]
@@ -1680,9 +1774,9 @@ if __name__ == '__main__':
 
 
     l = Exponential(math.log(1))
-    e = ExpSingleBudget(LQG_ENV, "ExpSingleBudget")
+    e = DebugSingleBudget(LQG_ENV, "DebugSingleBudget3")
     filename = os.path.join(BASE_FOLDER, generate_filename())
-    e.run(theta=-0.1, sigma_fun=l, eps=EPS, verbose=False, two_steps=True, n_iterations=N_ITERATIONS, filename=None, downsample=5)
+    e.run(theta=-0.1, sigma_fun=l, eps=EPS, verbose=True, two_steps=True, n_iterations=N_ITERATIONS, filename=filename, downsample=1)
 
     exit()
 

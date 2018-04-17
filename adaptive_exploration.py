@@ -89,7 +89,7 @@ class BaseExperiment(object):
         self.data = []
         self.count = 0
 
-        self.n_cores = multiprocessing.cpu_count() // 2
+        self.n_cores = multiprocessing.cpu_count()
         self.name = name
 
         self.random_seed = random_seed
@@ -857,8 +857,6 @@ class ExpBudget_DetPolicy(BaseExperiment):
 
 
 
-
-
             N_old = N
             J_journey /= N
             #Check if done
@@ -873,7 +871,11 @@ class ExpBudget_DetPolicy(BaseExperiment):
 
         self.save_data(filename)
 
-class SimultaneousThetaAndSigma(BaseExperiment):
+
+
+
+
+class SimultaneousThetaAndSigma_half(BaseExperiment):
     def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
         self.use_local_stats = True
         self.initial_configuration = self.get_param_list(locals())
@@ -881,7 +883,7 @@ class SimultaneousThetaAndSigma(BaseExperiment):
 
         N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
         # N1, N2, N3 = self.split_trajectory_count(N)
-        N2 = N//3
+        N2 = N//2
         N1 = N - N2
 
         #Multiprocessing preparation
@@ -899,7 +901,7 @@ class SimultaneousThetaAndSigma(BaseExperiment):
         N_tot = 0
         start_time = time.time()
         J_hat = prevJ
-        J_journey = (2*prevJ + prevJ_det)/3
+        J_journey = (prevJ + prevJ_det)/2
 
         while iteration < self.constr.max_iter:
             iteration+=1
@@ -918,10 +920,11 @@ class SimultaneousThetaAndSigma(BaseExperiment):
 
             # PERFORM FIRST STEP
             features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N1, parallel=parallel)
+            # features, actions, rewards, J_hat2, gradients2 = self.get_trajectories_data(policy, N1//2, parallel=parallel)
             J_journey += J_hat * N1
 
             if iteration > 1:
-                self.budget += N1*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
+                self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
                 prevJ = J_hat
 
 
@@ -936,14 +939,179 @@ class SimultaneousThetaAndSigma(BaseExperiment):
 
             prevJ_det = newJ_det
 
-            # PERFORM THIRD STEP
-            # features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N3, parallel=parallel)
-            # J_journey += J_hat * N3
-
-            # self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma) - J(theta, sigma)
-            # prevJ = J_hat
 
             beta, _, _ = self.meta_selector.select_beta(policy, gradients, self.task_prop, N1//2, iteration, self.budget)
+            policy.update_w(beta * gradients['gradDeltaW'])
+
+
+
+            N_old = N
+            J_journey /= N
+            #Check if done
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached')
+                print('End experiment')
+                break
+
+
+        # SAVE DATA
+
+        self.save_data(filename)
+
+
+
+class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
+    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
+        self.use_local_stats = True
+        self.initial_configuration = self.get_param_list(locals())
+        self.estimator = Estimators(self.task_prop, self.constr)
+
+        N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
+        # N1, N2, N3 = self.split_trajectory_count(N)
+        N2 = N//2
+        N1 = N - N2
+
+        #Multiprocessing preparation
+        if parallel:
+            self._enable_parallel()
+
+
+        # COMPUTE BASELINES
+        features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+        prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True, get_min=False)
+
+
+        #Learning
+        iteration = 0
+        N_tot = 0
+        start_time = time.time()
+        J_hat = prevJ
+        J_journey = (prevJ + prevJ_det)/2
+
+        while iteration < self.constr.max_iter:
+            iteration+=1
+            J_det_exact = self.evaluate(policy, deterministic=True)
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+
+            J_journey = 0
+
+            # PRINT
+            if verbose:
+                if iteration % 50 == 1:
+                    print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N1, parallel=parallel)
+            # features, actions, rewards, J_hat2, gradients2 = self.get_trajectories_data(policy, N1//2, parallel=parallel)
+            J_journey += J_hat * N1
+
+            if iteration > 1:
+                self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
+                prevJ = J_hat
+
+
+            alpha, _, _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1//3, iteration, self.budget)
+            policy.update(alpha * gradients['grad_theta'])
+
+            # PERFORM SECOND STEP
+            newJ_det = self.estimate_policy_performance(policy, N2, parallel=parallel, deterministic=True)
+            J_journey += newJ_det * N2
+
+            self.budget += N2*(newJ_det - prevJ_det)    # B += J(theta', 0) - J(theta, 0)
+
+            prevJ_det = newJ_det
+
+
+            beta, _, _ = self.meta_selector.select_beta(policy, gradients, self.task_prop, 2*N1//3, iteration, self.budget)
+            policy.update_w(beta * gradients['gradDeltaW'])
+
+
+
+            N_old = N
+            J_journey /= N
+            #Check if done
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached')
+                print('End experiment')
+                break
+
+
+        # SAVE DATA
+
+        self.save_data(filename)
+
+
+class SimultaneousThetaAndSigma_two_thirds_sigma(BaseExperiment):
+    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
+        self.use_local_stats = True
+        self.initial_configuration = self.get_param_list(locals())
+        self.estimator = Estimators(self.task_prop, self.constr)
+
+        N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
+        # N1, N2, N3 = self.split_trajectory_count(N)
+        N2 = N//2
+        N1 = N - N2
+
+        #Multiprocessing preparation
+        if parallel:
+            self._enable_parallel()
+
+
+        # COMPUTE BASELINES
+        features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+        prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True, get_min=False)
+
+
+        #Learning
+        iteration = 0
+        N_tot = 0
+        start_time = time.time()
+        J_hat = prevJ
+        J_journey = (prevJ + prevJ_det)/2
+
+        while iteration < self.constr.max_iter:
+            iteration+=1
+            J_det_exact = self.evaluate(policy, deterministic=True)
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+
+            J_journey = 0
+
+            # PRINT
+            if verbose:
+                if iteration % 50 == 1:
+                    print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N1, parallel=parallel)
+            # features, actions, rewards, J_hat2, gradients2 = self.get_trajectories_data(policy, N1//2, parallel=parallel)
+            J_journey += J_hat * N1
+
+            if iteration > 1:
+                self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
+                prevJ = J_hat
+
+
+            alpha, _, _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, 2*N1//3, iteration, self.budget)
+            policy.update(alpha * gradients['grad_theta'])
+
+            # PERFORM SECOND STEP
+            newJ_det = self.estimate_policy_performance(policy, N2, parallel=parallel, deterministic=True)
+            J_journey += newJ_det * N2
+
+            self.budget += N2*(newJ_det - prevJ_det)    # B += J(theta', 0) - J(theta, 0)
+
+            prevJ_det = newJ_det
+
+
+            beta, _, _ = self.meta_selector.select_beta(policy, gradients, self.task_prop, N1//3, iteration, self.budget)
             policy.update_w(beta * gradients['gradDeltaW'])
 
 
