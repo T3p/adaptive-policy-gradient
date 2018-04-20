@@ -33,7 +33,7 @@ def identity(x):
     """Identity function"""
     return x
 
-def zero_fun(x):
+def zero_fun(x, deterministic=None):
     """Null function"""
     return 0
 
@@ -51,10 +51,20 @@ def generate_filename():
     return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(15))
 
 def split_batch_sizes(batch_size, n):
-    r = batch_size // n
-    r2 = batch_size - (n-1)*r
+    min_num = min(batch_size, 1)
+    x = batch_size
+    r = [0] * n
+    i = 0
+    max_num = max(math.ceil(batch_size / n), min_num)
+    while x > 0:
+        r[i] = min(max_num, x)
+        x -= r[i]
+        i+=1
 
-    return [r] * (n-1) + [r2]
+    return r
+
+def is_diagonal(x):
+    return np.count_nonzero(x - np.diag(np.diagonal(x))) == 0
 
 #
 #   LQG SCALAR SPECIFIC FUNCTIONS

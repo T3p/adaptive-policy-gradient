@@ -3,6 +3,7 @@ import sys
 import random
 import policies
 import gym
+from scipy import stats
 import lqg1d
 from joblib import Parallel,delayed
 import multiprocessing
@@ -24,45 +25,60 @@ import pandas as pd
 import json
 import os
 
-
 #Trajectory (can be run in parallel)
-def trajectory(env,tp,pol,feature_fun,traces,n,initial=None,noises=[], deterministic=False):
-    if  len(noises)==0:
-        noises = np.random.normal(0,1,tp.H)
+def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False):
+    trace_length = np.zeros((batch_size,))
 
-    s = env.reset(initial)
+    features = np.zeros((batch_size, tp.H, pol.feat_dim))
+    actions = np.zeros((batch_size, tp.H, pol.act_dim))
+    rewards = np.zeros((batch_size, tp.H))
+
     # s = env.reset([-3.5])
-    for l in range(tp.H):
-        phi = feature_fun(np.ravel(s))
-        a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
-        s,r,done,_ = env.step(a)
-        traces[n,l] = np.concatenate((np.atleast_1d(phi),np.atleast_1d(a),np.atleast_1d(r)))
-        if(done):
-            break
+    for n in range(batch_size):
+        s = env.reset()
+        s = env.state = [-0.5, 0]
+        noises = np.random.normal(0,1,tp.H)
+        trace_length[n] = tp.H
+        for l in range(tp.H):
+            phi = feature_fun(np.ravel(s))
+            a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
+            s,r,done,_ = env.step(a)
+            features[n,l] = np.atleast_1d(phi)
+            actions[n,l] = np.atleast_1d(a)
+            rewards[n,l] = r
+
+            if(done):
+                trace_length[n] = l
+                break
+
+    # features = stats.zscore(features, axis=1)
+    # actions = stats.zscore(actions, axis=1)
+    features = (features - np.min(features, axis=1, keepdims=True)) / (np.max(features, axis=1, keepdims=True) - np.min(features, axis=1, keepdims=True))
+    # actions = (actions - np.min(actions, axis=1, keepdims=True)) / (np.max(actions, axis=1, keepdims=True) - np.min(actions, axis=1, keepdims=True))
+
+    if batch_size > 0:
+        scores_theta = apply_along_axis2(pol.score,2,actions,features)
+        scores_sigma = apply_along_axis2(pol.score_sigma,2,actions,features)
+    else:
+        scores_theta = np.zeros((batch_size, tp.H, pol.feat_dim))
+        scores_sigma = np.zeros((batch_size, tp.H))
+    return features, actions, rewards, scores_theta, scores_sigma, trace_length
+
+
 
 #Trajectory (can be run in parallel)
 def trajectory_parallel(tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False):
     p = multiprocessing.current_process()
-    traces = np.zeros((batch_size, tp.H, pol.feat_dim + pol.act_dim + 1))
+    return trajectory_serial(p.env, tp, pol, feature_fun, batch_size, initial, noises, deterministic)
 
-    # s = env.reset([-3.5])
-    for n in range(batch_size):
-        s = p.env.reset(initial)
-        noises = np.random.normal(0,1,tp.H)
-        for l in range(tp.H):
-            phi = feature_fun(np.ravel(s))
-            a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
-            s,r,done,_ = p.env.step(a)
-            traces[n,l] = np.concatenate((np.atleast_1d(phi),np.atleast_1d(a),np.atleast_1d(r)))
-            if(done):
-                break
-    return traces
+
 
 def process_initializer(q):
     p = multiprocessing.current_process()
     seed = q.get()
     #p.env = env
-    p.env = gym.make('LQG1D-v0')
+    # p.env = gym.make('LQG1D-v0')
+    p.env = gym.make('MountainCarContinuous-v0').env
     p.env.seed(seed)
     np.random.seed(seed % 2**32)
     random.seed(seed)
@@ -88,6 +104,7 @@ class BaseExperiment(object):
         self.budget = 0
         self.data = []
         self.count = 0
+        self.descs = None
 
         self.n_cores = multiprocessing.cpu_count()
         self.name = name
@@ -116,17 +133,19 @@ class BaseExperiment(object):
     def _get_trajectories(self, policy, batch_size, parallel=True, deterministic=False):
         if parallel:
             args = [[self.task_prop, policy, self.feature_fun, b, None, [], deterministic] for b in split_batch_sizes(batch_size, self.n_cores)]
-            traces = np.concatenate(self.pool.starmap(trajectory_parallel, args))
+            data = self.pool.starmap(trajectory_parallel, args)
+
+            features = np.concatenate([data[i][0] for i in range(len(data))])
+            actions = np.concatenate([data[i][1] for i in range(len(data))])
+            rewards = np.concatenate([data[i][2] for i in range(len(data))])
+            scores_theta = np.concatenate([data[i][3] for i in range(len(data))])
+            scores_sigma = np.concatenate([data[i][4] for i in range(len(data))])
+            trace_length = np.concatenate([data[i][5] for i in range(len(data))])
         else:
-            traces = np.zeros((batch_size, self.task_prop.H, policy.feat_dim + policy.act_dim + 1))
-            for n in range(batch_size):
-                trajectory(self.env, self.task_prop, policy, self.feature_fun, traces, n, deterministic=deterministic)
+            features, actions, rewards, scores_theta, scores_sigma, trace_length = trajectory_serial(self.env, self.task_prop, policy, self.feature_fun, batch_size, None, [], deterministic)
 
-        features = traces[:,:,:policy.feat_dim]
-        actions = traces[:,:,policy.feat_dim:policy.feat_dim+policy.act_dim]
-        rewards = traces[:,:,-1]
 
-        return features, actions, rewards
+        return features, actions, rewards, scores_theta, scores_sigma, trace_length
 
     def estimate_policy_performance(self, policy, N, parallel=False, deterministic=False, get_min=False):
         """Estimates the policy performance
@@ -137,7 +156,7 @@ class BaseExperiment(object):
 
         Returns: the performance of the Policy
         """
-        _, _, rewards = self._get_trajectories(policy, N, parallel=parallel, deterministic=deterministic)
+        _, _, rewards, _, _, _ = self._get_trajectories(policy, N, parallel=parallel, deterministic=deterministic)
         J_hat = performance(rewards, self.task_prop.gamma, average=False)
 
         if get_min:
@@ -160,12 +179,12 @@ class BaseExperiment(object):
 
         Returns: a tuple (features, actions, rewards, J, gradients)
         """
-        features, actions, rewards = self._get_trajectories(policy, N, parallel=parallel)
+        features, actions, rewards, scores_theta, scores_sigma, trace_lengths = self._get_trajectories(policy, N, parallel=parallel)
         self.task_prop.update(features, actions, rewards, self.use_local_stats)
         self.estimator.update(self.task_prop)
 
         J = performance(rewards, self.task_prop.gamma)
-        gradients = self.estimator.estimate(features, actions, rewards, policy)
+        gradients = self.estimator.estimate(features, actions, rewards, scores_theta, scores_sigma, trace_lengths, policy)
 
         return features, actions, rewards, J, gradients
 
@@ -190,22 +209,44 @@ class BaseExperiment(object):
 
         data_row = [
             self.count,
-            params['gradients']['grad_theta'],
             params['gradients']['grad_w'],
-            params['gradients']['grad_mixed'],
             params['gradients']['gradDeltaW'],
             safe_get('prevJ'),
             safe_get('prevJ_det'),
             safe_get('alpha'),
             safe_get('beta'),
             safe_get('N'),
-            np.asscalar(params['policy'].theta_mat),
             params['policy'].sigma,
             self.budget,
-            safe_get('N2'),
             safe_get('J_journey'),
             safe_get('J_det_exact')
         ]
+        thetas = np.atleast_1d(params['policy'].theta_mat).ravel()
+        for t in thetas:
+            data_row.append(t)
+
+        grad_thetas = np.atleast_1d(params['gradients']['grad_theta']).ravel()
+        for t in grad_thetas:
+            data_row.append(t)
+
+        grad_mixeds = np.atleast_1d(params['gradients']['grad_mixed']).ravel()
+        for t in grad_mixeds:
+            data_row.append(t)
+
+        if self.descs is None:
+            descs = ['T','GRAD_W','GRAD_DELTAW','J','J_DET','ALPHA',
+                    'BETA','N','SIGMA','BUDGET','J_JOURNEY','J_DET_EXACT']
+
+            for i,_ in enumerate(thetas):
+                descs.append('THETA_' + str(i))
+
+            for i,_ in enumerate(grad_thetas):
+                descs.append('GRAD_THETA_' + str(i))
+
+            for i,_ in enumerate(grad_mixeds):
+                descs.append('GRAD_MIXED_' + str(i))
+
+            self.descs = descs
 
         return data_row
 
@@ -215,22 +256,8 @@ class BaseExperiment(object):
         self.count += 1
 
     def get_checkpoint_description(self):
-        return ['T',
-                'GRAD_THETA',
-                'GRAD_W',
-                'GRAD_MIXED',
-                'GRAD_DELTAW',
-                'J',
-                'J_DET',
-                'ALPHA',
-                'BETA',
-                'N',
-                'THETA',
-                'SIGMA',
-                'BUDGET',
-                'N2',
-                'J_JOURNEY',
-                'J_DET_EXACT']
+        return self.descs
+
 
     def run(self, *args, **kwargs):
         raise NotImplementedError()

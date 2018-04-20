@@ -3,6 +3,7 @@ import numpy as np
 import math
 from scipy.linalg import sqrtm
 import time
+import utils
 
 """Policies"""
 
@@ -133,16 +134,21 @@ class ExpGaussPolicy(GaussPolicy):
     """Scalar implementation of a Gaussian Policy with variance parameterized with an exponential function
     """
     def __init__(self,theta,w):
-        assert(np.isscalar(w))
+        w = np.atleast_2d(w)
+        assert(utils.is_diagonal(w))
+
         self.w = w
-        super().__init__(theta, np.exp(w))
+        super().__init__(theta, np.diag(np.exp(np.diagonal(w))))
 
     def update_w(self, deltaW):
-        assert(np.isscalar(deltaW))
+        # print('deltaW =', deltaW)
+        # print('self.w = ', self.w)
+        deltaW = np.atleast_2d(deltaW)
+
         self.w += deltaW
 
         #self.cov = np.asmatrix(math.exp(self.w))
-        self.cov = np.atleast_2d(math.exp(self.w))
+        self.cov = np.atleast_2d(np.diag(np.exp(np.diagonal(self.w))))
         self.cov = np.power(self.cov, 2)
 
         self.sigma = math.sqrt(np.linalg.det(self.cov))
@@ -160,10 +166,21 @@ class ExpGaussPolicy(GaussPolicy):
         # phi = np.asmatrix(phi).T
         # a = np.asmatrix(a).T
 
+        # score = np.dot(self.inv_cov, \
+        #             np.dot((a - np.dot(self.theta_mat,phi)),np.transpose(phi)))
+
+
         phi = np.atleast_2d(phi).T
         a = np.atleast_2d(a).T
 
-        return np.asscalar(((a-self.theta_mat*phi)**2 - self.cov)/(self.cov * np.sqrt(self.cov)))
+        # print('phi: ', phi)
+        # print('a: ', a)
+        # print('dot_prod: ', np.dot(self.theta_mat, phi))
+        # print('cov: ', self.cov)
+
+        score = ((a-np.dot(self.theta_mat, phi))**2 - self.cov)/(self.cov * np.sqrt(self.cov))
+
+        return np.asscalar(score) if np.size(score) == 1 else np.ravel(score)
 
     def penaltyCoeffSigma(self,R,M,gamma,volume,d=None):
         """Penalty coefficient for sigma for performance improvement bounds

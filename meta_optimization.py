@@ -160,25 +160,35 @@ class BudgetMetaSelector(object):
     def __init__(self):
         pass
 
-    def select_alpha(self, policy, gradients, tp, N1, iteration, budget=None):
+    def select_alpha(self, policy, gradients, tp, N1, iteration, budget=None, coordinate=True):
         """Perform a safe update on theta
         """
         sigma = policy.sigma
         c = policy.penaltyCoeff(tp.R, tp.M, tp.gamma, tp.volume)
+        m = policy.feat_dim
+
+        if coordinate == True:
+            g_low = gradients['grad_theta_inf_low']
+            g_high = gradients['grad_theta_inf_high']
+        else:
+            g_low = gradients['grad_theta_low']
+            g_high = gradients['grad_theta_high']
 
         if budget is None:  # Safe step
-            return gradients['grad_theta_low']**2/(2*c*gradients['grad_theta_high']**2),N1,True
-
-        # if budget / N1 >= -(gradients['grad_theta']**2)/(4*c):
-        if budget/N1 >= -(gradients['grad_theta_low']**4) / (4*c*gradients['grad_theta_high']**2):
-            # alpha_star = (1 + math.sqrt(1 - (4 * c * (-budget / N1))/(gradients['grad_theta']**2))) / (2 * c)
-
-            alpha_star = (gradients['grad_theta_low']**2 + math.sqrt(gradients['grad_theta_low']**4 + 4*c*(budget/N1)*gradients['grad_theta_high']**2)) / (2*c*gradients['grad_theta_high']**2)
+            alpha_star = g_low**2/(2 * c * g_high**2)
         else:
-            # alpha_star = 1/(2*c)
-            alpha_star = gradients['grad_theta_low']**2/(2*c*gradients['grad_theta_high']**2)
+            if budget/N1 >= -(g_low**4) / (4 * c * g_high**2):
+                alpha_star = (g_low**2 + math.sqrt(g_low**4 + 4 * c * (budget/N1) * g_high**2)) / (2 * c * g_high**2)
+            else:
+                alpha_star = g_low**2/(2 * c * g_high**2)
 
-        return alpha_star,N1,False
+        if coordinate == True:
+            step = np.zeros(m)
+            step[np.argmax(gradients['grad_theta'])] = alpha_star
+        else:
+            step = np.ones(m) * alpha_star
+
+        return 2000*step,N1,False
 
     def select_beta(self, policy, gradients, tp, N3, iteration, budget):
         sigma = policy.sigma
@@ -189,11 +199,7 @@ class BudgetMetaSelector(object):
             return gradients['grad_w_low']**2/(2*d*gradients['grad_w_high']**2),N3,True
 
         # assert that the budget is small enough
-        #if budget / N3 >= -(gradients['grad_w']**2)/(4*d):
         if budget/N3 >= -(gradients['grad_w_low']**4) / (4*d*gradients['grad_w_high']**2):
-            # beta_tilde_minus = (1 - math.sqrt(1 - (4 * d * (-budget/N3))/(gradients['grad_w']**2))) / (2 * d)
-            # beta_tilde_plus = (1 + math.sqrt(1 - (4 * d * (-budget/N3))/(gradients['grad_w']**2))) / (2 * d)
-
             beta_tilde_plus = (gradients['grad_w_low']**2 + math.sqrt(gradients['grad_w_low']**4 + 4*d*(budget/N3)*gradients['grad_w_high']**2)) / (2*d*gradients['grad_w_high']**2)
             beta_tilde_minus = (gradients['grad_w_low']**2 - math.sqrt(gradients['grad_w_low']**4 + 4*d*(budget/N3)*gradients['grad_w_high']**2)) / (2*d*gradients['grad_w_high']**2)
 
@@ -204,11 +210,10 @@ class BudgetMetaSelector(object):
 
         else:
             beta_star = gradients['grad_w_low']**2/(2*d*gradients['grad_w_high']**2) * gradients['grad_w'] / gradients['gradDeltaW']
-            # beta_star = 1/(2*d) * gradients['grad_w'] / gradients['gradDeltaW']
 
 
 
-        return beta_star,N3,False
+        return 2000*beta_star,N3,False
 
 class VanishingMeta(MetaSelector):
     def __init__(self,alpha,N,alpha_exp=0.5,N_exp = 0):

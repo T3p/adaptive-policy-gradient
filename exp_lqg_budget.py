@@ -11,7 +11,7 @@ import os
 
 from gym.utils import seeding
 
-from utils import maybe_make_dir
+from utils import maybe_make_dir, zero_fun
 
 import argparse
 
@@ -40,14 +40,17 @@ def run(experiment_class='Experiment',
         parallel=False,
         verbose=False,
         ):
+    random_seed = 0
     print(experiment_class, name, batch_size, max_iters, random_seed)
     #Task
     meta_selector = BudgetMetaSelector()
-    env = gym.make('LQG1D-v0')
-    R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
-    M = env.max_pos
-    gamma = env.gamma
-    H = env.horizon
+    env = gym.make('MountainCarContinuous-v0')
+    env = env.env
+    #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
+    R = 0
+    M = np.linalg.norm(np.array([env.max_position, env.min_position]), np.inf)
+    gamma = 0.999
+    H = 1000#env.horizon
     tp = TaskProp(
             gamma,
             H,
@@ -55,15 +58,17 @@ def run(experiment_class='Experiment',
             env.max_action,
             R,
             M,
-            -env.max_pos,
-            env.max_pos,
+            env.min_position,
+            env.max_position,
             2*env.max_action
     )
     local = True
 
     #Policy
-    theta_0 = -0.1
-    w = math.log(1)#math.log(env.sigma_controller)
+    theta_0 = np.array([0, 20])
+    # theta_0 = np.array([-0.1])
+    #w = np.array([[math.log(1), 0], [0, math.log(1)]])#math.log(env.sigma_controller)
+    w = np.array([math.log(1)])
     pol = ExpGaussPolicy(theta_0,w)
 
     #Features
@@ -76,14 +81,14 @@ def run(experiment_class='Experiment',
                 N_max=500000,
                 N_tot = 30000000,
                 max_iter = max_iters,
-                approximate_gradients=True
+                approximate_gradients=False
     )
 
     #Evaluation of expected performance
-    def evaluate(pol,deterministic=False):
-        var = 0 if deterministic else pol.cov
-        return env.computeJ(pol.theta_mat,var)
-
+    # def evaluate(pol,deterministic=False):
+    #     var = 0 if deterministic else pol.cov
+    #     return env.computeJ(pol.theta_mat,var)
+    evaluate = zero_fun
     #Run
     # exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
     # exp = adaptive_exploration.CollectDataExperiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
