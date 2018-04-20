@@ -24,6 +24,9 @@ class GaussPolicy:
 
         assert np.array_equal(cov,np.transpose(cov))
         self.cov = cov.astype(float)
+
+        self.chol_cov = np.linalg.cholesky(self.cov)
+
         d = self.act_dim = np.shape(cov)[0]
         self.sigma = math.sqrt(np.linalg.det(cov))
 
@@ -59,7 +62,7 @@ class GaussPolicy:
         if noise is None:
             noise = normal(0,1,self.act_dim)
 
-        a = mu + np.dot(np.linalg.cholesky(self.cov),noise)
+        a = mu + np.dot(self.chol_cov,noise)
         return np.asscalar(a) if np.size(a)==1 else np.ravel(a)
 
     def prob(self,a,phi):
@@ -150,6 +153,8 @@ class ExpGaussPolicy(GaussPolicy):
         #self.cov = np.asmatrix(math.exp(self.w))
         self.cov = np.atleast_2d(np.diag(np.exp(np.diagonal(self.w))))
         self.cov = np.power(self.cov, 2)
+
+        self.chol_cov = np.linalg.cholesky(self.cov)
 
         self.sigma = math.sqrt(np.linalg.det(self.cov))
         self.inv_cov = np.linalg.inv(self.cov)

@@ -147,27 +147,37 @@ def estError(d,f,N):
 
 class MetaSelector(object):
     """Meta-parameters for the policy gradient problem"""
-    def __init__(self,alpha,N):
+    def __init__(self,alpha,N, coordinate=True):
+        self.coordinate = coordinate
         self.alpha = np.atleast_1d(alpha)
         self.N = N
 
-    def select(self,pol,gs,tp,N_pre,iteration):
-        return self.alpha,self.N,False
+    def select_alpha(self,policy,gradients,tp,N_pre,iteration, budget=None):
+        m = policy.feat_dim
+
+        if self.coordinate == True:
+            step = np.zeros(m)
+            step[np.argmax(gradients['grad_theta'])] = self.alpha
+        else:
+            step = np.ones(m) * self.alpha
+
+        return step,self.N,False
 
 ConstMeta = MetaSelector
 
 class BudgetMetaSelector(object):
-    def __init__(self):
-        pass
+    def __init__(self, confidence = 1, coordinate=True):
+        self.confidence = confidence
+        self.coordinate = coordinate
 
-    def select_alpha(self, policy, gradients, tp, N1, iteration, budget=None, coordinate=True):
+    def select_alpha(self, policy, gradients, tp, N1, iteration, budget=None):
         """Perform a safe update on theta
         """
         sigma = policy.sigma
         c = policy.penaltyCoeff(tp.R, tp.M, tp.gamma, tp.volume)
         m = policy.feat_dim
 
-        if coordinate == True:
+        if self.coordinate == True:
             g_low = gradients['grad_theta_inf_low']
             g_high = gradients['grad_theta_inf_high']
         else:
@@ -182,13 +192,13 @@ class BudgetMetaSelector(object):
             else:
                 alpha_star = g_low**2/(2 * c * g_high**2)
 
-        if coordinate == True:
+        if self.coordinate == True:
             step = np.zeros(m)
             step[np.argmax(gradients['grad_theta'])] = alpha_star
         else:
             step = np.ones(m) * alpha_star
 
-        return 2000*step,N1,False
+        return self.confidence * step,N1,False
 
     def select_beta(self, policy, gradients, tp, N3, iteration, budget):
         sigma = policy.sigma
@@ -213,7 +223,7 @@ class BudgetMetaSelector(object):
 
 
 
-        return 2000*beta_star,N3,False
+        return self.confidence * beta_star,N3,False
 
 class VanishingMeta(MetaSelector):
     def __init__(self,alpha,N,alpha_exp=0.5,N_exp = 0):

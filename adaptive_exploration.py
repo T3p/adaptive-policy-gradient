@@ -25,6 +25,9 @@ import pandas as pd
 import json
 import os
 
+import fast_utils
+from fast_utils import step_mountain_car
+
 #Trajectory (can be run in parallel)
 def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False):
     trace_length = np.zeros((batch_size,))
@@ -36,13 +39,14 @@ def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noise
     # s = env.reset([-3.5])
     for n in range(batch_size):
         s = env.reset()
-        s = env.state = [-0.5, 0]
+        #s = env.state = [-0.5, 0]
         noises = np.random.normal(0,1,tp.H)
         trace_length[n] = tp.H
         for l in range(tp.H):
             phi = feature_fun(np.ravel(s))
             a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
-            s,r,done,_ = env.step(a)
+            s,r,done,_ = step_mountain_car(s, a)
+            # s,r,done,_ = env.step(a)
             features[n,l] = np.atleast_1d(phi)
             actions[n,l] = np.atleast_1d(a)
             rewards[n,l] = r
@@ -57,11 +61,16 @@ def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noise
     # actions = (actions - np.min(actions, axis=1, keepdims=True)) / (np.max(actions, axis=1, keepdims=True) - np.min(actions, axis=1, keepdims=True))
 
     if batch_size > 0:
-        scores_theta = apply_along_axis2(pol.score,2,actions,features)
-        scores_sigma = apply_along_axis2(pol.score_sigma,2,actions,features)
+        # scores_theta = apply_along_axis2(pol.score,2,actions,features)
+        # scores_sigma = apply_along_axis2(pol.score_sigma,2,actions,features)
+
+        scores_theta = fast_utils.fast_calc_score_theta(actions, features, pol.theta_mat, np.asscalar(pol.inv_cov))
+        scores_sigma = fast_utils.fast_calc_score_sigma(actions, features, pol.theta_mat, np.asscalar(pol.cov))
+
     else:
-        scores_theta = np.zeros((batch_size, tp.H, pol.feat_dim))
+        scores_theta = np.zeros((batch_size, tp.H, pol.feat_dim)).squeeze()
         scores_sigma = np.zeros((batch_size, tp.H))
+
     return features, actions, rewards, scores_theta, scores_sigma, trace_length
 
 
@@ -69,16 +78,19 @@ def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noise
 #Trajectory (can be run in parallel)
 def trajectory_parallel(tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False):
     p = multiprocessing.current_process()
+    # return fast_trajectory(p.env, tp, pol, feature_fun, batch_size, initial, noises, deterministic)
     return trajectory_serial(p.env, tp, pol, feature_fun, batch_size, initial, noises, deterministic)
 
 
 
-def process_initializer(q):
+def process_initializer(q, env_name):
     p = multiprocessing.current_process()
     seed = q.get()
     #p.env = env
     # p.env = gym.make('LQG1D-v0')
-    p.env = gym.make('MountainCarContinuous-v0').env
+    p.env = gym.make(env_name)
+    if 'env' in p.env.__dict__:
+        p.env = p.env.env
     p.env.seed(seed)
     np.random.seed(seed % 2**32)
     random.seed(seed)
@@ -86,7 +98,7 @@ def process_initializer(q):
 
 class BaseExperiment(object):
     def __init__(self,
-                env,
+                env_name,
                 task_prop,
                 meta_selector,
                 constr=OptConstr(),
@@ -94,7 +106,10 @@ class BaseExperiment(object):
                 evaluate=zero_fun,
                 name = 'Budget exp',
                 random_seed = 2**32+4):
-        self.env = env
+        self.env_name = env_name
+        self.env = gym.make(env_name)
+
+
         self.task_prop = task_prop
         self.meta_selector = meta_selector
         self.constr = constr
@@ -126,6 +141,10 @@ class BaseExperiment(object):
         params['gamma'] = self.task_prop.gamma
         params['name'] = self.name
         params.update(self.constr.__dict__)
+        try:
+            params['confidence'] = params['meta_selector'].confidence
+        except:
+            pass
         del params['policy']
 
         return dict(params)
@@ -193,7 +212,7 @@ class BaseExperiment(object):
         for i in range(self.n_cores):
             q.put(np.random.randint(0,2**32))
 
-        self.pool = multiprocessing.Pool(self.n_cores, initializer=process_initializer, initargs=(q,))
+        self.pool = multiprocessing.Pool(self.n_cores, initializer=process_initializer, initargs=(q,self.env_name))
 
     def save_data(self, filename):
         col_names = self.get_checkpoint_description()
@@ -335,7 +354,7 @@ class MonotonicOnlyTheta(BaseExperiment):
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', J_hat, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', prevJ, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 
