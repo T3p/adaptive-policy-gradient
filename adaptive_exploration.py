@@ -44,7 +44,8 @@ def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noise
         trace_length[n] = tp.H
         for l in range(tp.H):
             phi = feature_fun(np.ravel(s))
-            a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
+            #a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
+            a = pol.act(phi,noises[l], deterministic=deterministic)
             s,r,done,_ = step_mountain_car(s, a)
             # s,r,done,_ = env.step(a)
             features[n,l] = np.atleast_1d(phi)
