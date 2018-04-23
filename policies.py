@@ -56,7 +56,7 @@ class GaussPolicy:
         mu = np.dot(self.theta_mat,phi)
 
         if deterministic:
-            return mu
+            return np.asscalar(mu) if np.size(mu) == 1 else np.ravel(mu)
 
         #Gaussian noise
         if noise is None:
