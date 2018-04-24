@@ -46,8 +46,8 @@ def run(env_name = 'MountainCarContinuous-v0',
     local = True
 
     #Policy
-    theta_0 = np.array([0, 1])
-    w = np.array([math.log(1)])
+    theta_0 = np.array([-0.2, 20])
+    w = np.array([math.log(0.5)])
     pol = ExpGaussPolicy(theta_0,w)
 
     #Features

@@ -29,7 +29,7 @@ import fast_utils
 from fast_utils import step_mountain_car
 
 #Trajectory (can be run in parallel)
-def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False):
+def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False, fast_step = None):
     trace_length = np.zeros((batch_size,))
 
     features = np.zeros((batch_size, tp.H, pol.feat_dim))
@@ -46,8 +46,11 @@ def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noise
             phi = feature_fun(np.ravel(s))
             #a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
             a = np.array([pol.act(phi,noises[l], deterministic=deterministic)])
-            s,r,done,_ = step_mountain_car(s, a)
-            # s,r,done,_ = env.step(a)
+            if fast_step is not None:
+                s,r,done,_ = fast_step(s, a)
+            else:
+                s,r,done,_ = env.step(a)
+
             features[n,l] = np.atleast_1d(phi)
             actions[n,l] = np.atleast_1d(a)
             rewards[n,l] = r
@@ -77,10 +80,10 @@ def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noise
 
 
 #Trajectory (can be run in parallel)
-def trajectory_parallel(tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False):
+def trajectory_parallel(tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False, fast_step = None):
     p = multiprocessing.current_process()
     # return fast_trajectory(p.env, tp, pol, feature_fun, batch_size, initial, noises, deterministic)
-    return trajectory_serial(p.env, tp, pol, feature_fun, batch_size, initial, noises, deterministic)
+    return trajectory_serial(p.env, tp, pol, feature_fun, batch_size, initial, noises, deterministic, fast_step=fast_step)
 
 
 
@@ -108,6 +111,10 @@ class BaseExperiment(object):
                 name = 'Budget exp',
                 random_seed = 2**32+4):
         self.env_name = env_name
+        if self.env_name == 'MountainCarContinuous-v0':
+            self.fast_step = fast_utils.step_mountain_car
+        else:
+            self.fast_step = None
         self.env = gym.make(env_name)
 
 
@@ -146,13 +153,17 @@ class BaseExperiment(object):
             params['confidence'] = params['meta_selector'].confidence
         except:
             pass
+        for i,t in enumerate(params['policy'].theta_mat.ravel()):
+            params['theta_' + str(i)] = t
+
+        params['sigma'] = params['policy'].sigma
         del params['policy']
 
         return dict(params)
 
     def _get_trajectories(self, policy, batch_size, parallel=True, deterministic=False):
         if parallel:
-            args = [[self.task_prop, policy, self.feature_fun, b, None, [], deterministic] for b in split_batch_sizes(batch_size, self.n_cores)]
+            args = [[self.task_prop, policy, self.feature_fun, b, None, [], deterministic, self.fast_step] for b in split_batch_sizes(batch_size, self.n_cores)]
             data = self.pool.starmap(trajectory_parallel, args)
 
             features = np.concatenate([data[i][0] for i in range(len(data))])
@@ -162,7 +173,7 @@ class BaseExperiment(object):
             scores_sigma = np.concatenate([data[i][4] for i in range(len(data))])
             trace_length = np.concatenate([data[i][5] for i in range(len(data))])
         else:
-            features, actions, rewards, scores_theta, scores_sigma, trace_length = trajectory_serial(self.env, self.task_prop, policy, self.feature_fun, batch_size, None, [], deterministic)
+            features, actions, rewards, scores_theta, scores_sigma, trace_length = trajectory_serial(self.env, self.task_prop, policy, self.feature_fun, batch_size, None, [], deterministic, fast_step=self.fast_step)
 
 
         return features, actions, rewards, scores_theta, scores_sigma, trace_length

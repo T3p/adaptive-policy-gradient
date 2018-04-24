@@ -41,12 +41,16 @@ def run(experiment_class='Experiment',
         random_seed = 0,
         parallel=False,
         verbose=False,
-        confidence = 1
+        confidence = 1,
+        sigma = 1,
+        theta = np.array([0, 0])
         ):
     print(experiment_class, name, batch_size, max_iters, random_seed)
     #Task
     meta_selector = BudgetMetaSelector(confidence=confidence)
+
     env = gym.make(env_name)
+    # Tweak for mountain car
     if 'env' in env.__dict__:
         env = env.env
     #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
@@ -74,10 +78,10 @@ def run(experiment_class='Experiment',
     local = True
 
     #Policy
-    theta_0 = np.array([0, 1])
+    theta_0 = theta
     # theta_0 = np.array([-0.1])
     #w = np.array([[math.log(1), 0], [0, math.log(1)]])#math.log(env.sigma_controller)
-    w = np.array([math.log(1)])
+    w = np.array([math.log(sigma)])
     pol = ExpGaussPolicy(theta_0,w)
 
     #Features
@@ -127,8 +131,13 @@ if __name__ == '__main__':
     parser.add_argument('--env_name', dest='env_name', type=str, default='LQG1D-v0', help='Name of gym environment')
     parser.add_argument('--confidence', dest='confidence', type=int, default=1, help='Multiply every step size by confidence')
 
-    args = parser.parse_args()
+    parser.add_argument('--sigma', dest = sigma, type=float, default=1, help="Value for sigma")
+    parser.add_argument('--theta', dest=theta, type=str, default = '[0,0]', help="Value for theta")
 
-    maybe_make_dir(args.filepath)
+    args = vars(parser.parse_args())
 
-    run(**vars(args))
+    args['theta'] = np.array(eval(args['theta']))
+
+    maybe_make_dir(args['filepath'])
+
+    run(**args)
