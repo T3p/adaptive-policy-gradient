@@ -5,6 +5,7 @@ import policies
 import gym
 from scipy import stats
 import lqg1d
+import cartpole
 from joblib import Parallel,delayed
 import multiprocessing
 import tempfile,os
@@ -61,7 +62,7 @@ def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noise
 
     # features = stats.zscore(features, axis=1)
     # actions = stats.zscore(actions, axis=1)
-    features = (features - np.min(features, axis=1, keepdims=True)) / (np.max(features, axis=1, keepdims=True) - np.min(features, axis=1, keepdims=True))
+    # features = (features - np.min(features, axis=1, keepdims=True)) / (np.max(features, axis=1, keepdims=True) - np.min(features, axis=1, keepdims=True))
     # actions = (actions - np.min(actions, axis=1, keepdims=True)) / (np.max(actions, axis=1, keepdims=True) - np.min(actions, axis=1, keepdims=True))
 
     if batch_size > 0:
@@ -113,6 +114,8 @@ class BaseExperiment(object):
         self.env_name = env_name
         if self.env_name == 'MountainCarContinuous-v0':
             self.fast_step = fast_utils.step_mountain_car
+        elif self.env_name == 'ContCartPole-v0':
+            self.fast_step = fast_utils.step_cartpole
         else:
             self.fast_step = None
         self.env = gym.make(env_name)
@@ -878,7 +881,7 @@ class ExpBudget_DetPolicy(BaseExperiment):
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 

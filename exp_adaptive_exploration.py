@@ -43,24 +43,33 @@ def run(experiment_class='Experiment',
         verbose=False,
         confidence = 1,
         sigma = 1,
-        theta = np.array([0, 0])
+        theta = np.array([0, 0]),
+        alpha = None
         ):
     print(experiment_class, name, batch_size, max_iters, random_seed)
     #Task
-    meta_selector = BudgetMetaSelector(confidence=confidence)
+    if alpha is None:
+        print("ALPHA IS NONE")
+        meta_selector = BudgetMetaSelector(confidence=confidence)
+    else:
+        print("ALPHA IS NOT NONE")
+        meta_selector = ConstMeta(alpha=alpha, N=None, coordinate=True)
 
     env = gym.make(env_name)
     # Tweak for mountain car
     if 'env' in env.__dict__:
         env = env.env
     #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
-    gamma = 0.999
-    H = 1000#env.horizon
+    gamma = 0.99
+    H = 200#env.horizon
 
     try:
         tp = TaskProp(gamma,H,env.min_action,env.max_action)
     except:
-        tp = TaskProp(gamma,H,-env.max_action,env.max_action)
+        try:
+            tp = TaskProp(gamma,H,-env.max_action,env.max_action)
+        except:
+            tp = TaskProp(gamma, H, -10, 10)
     # R = 0
     # M = np.linalg.norm(np.array([env.max_position, env.min_position]), np.inf)
 
@@ -133,6 +142,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--sigma', dest = 'sigma', type=float, default=1, help="Value for sigma")
     parser.add_argument('--theta', dest='theta', type=str, default = '[0,0]', help="Value for theta")
+
+    parser.add_argument('--alpha', dest='alpha', type=str, default=None, help='Fixed step size')
 
     args = vars(parser.parse_args())
 
