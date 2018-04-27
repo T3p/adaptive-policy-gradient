@@ -157,5 +157,3 @@ class ContCartPole(gym.Env):
         self.poletrans.set_rotation(-x[2])
 
         return self.viewer.render(return_rgb_array = mode=='rgb_array')
-
-

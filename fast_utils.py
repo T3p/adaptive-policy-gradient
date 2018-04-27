@@ -3,6 +3,41 @@ import math
 import numba
 from utils import apply_along_axis2
 
+
+def make_phi_mountain_car():
+    means = np.array([[-1.2 , -0.07 ],
+               [-1.2 , 0 ],
+               [-1.2 ,  0.07 ],
+               [-0.6 ,  -0.07 ],
+               [-0.6, -0 ],
+               [-0.6, 0.07 ],
+               [0,  -0.07 ],
+               [0,  0 ],
+               [ 0 , 0.07 ],
+               [ 0.6 , -0.07 ],
+               [ 0.6 ,  0 ],
+               [ 0.6 ,  0.07 ]])
+
+    @numba.jit(nopython=True)
+    def f(s):
+        phi = np.zeros(means.shape[0])
+        for i in range(means.shape[0]):
+            phi[i] = gauss_kernel(s, means[i])
+
+        return phi
+
+    return f
+
+
+def normalize_mountain_car(s):
+    return np.array([(s[0] + 0.3) / 0.9,s[1] / 0.07])
+
+
+@numba.jit(nopython=True)
+def gauss_kernel(s1, s2):
+    return math.exp(-np.linalg.norm(np.subtract(s1,s2), 2)**2)
+
+
 @numba.jit(nopython=True)
 def step_mountain_car(prev_state, action):
     min_action = -1.0
@@ -11,8 +46,8 @@ def step_mountain_car(prev_state, action):
     max_position = 0.6
     max_speed = 0.07
     goal_position = 0.45 # was 0.5 in gym, 0.45 in Arnaud de Broissia's version
-    #power = 0.0015
-    power = 0.001
+    power = 0.0015
+    # power = 0.001
 
     position = prev_state[0]
     velocity = prev_state[1]

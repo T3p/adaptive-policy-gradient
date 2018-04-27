@@ -369,7 +369,12 @@ class MonotonicOnlyTheta(BaseExperiment):
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', prevJ, '\t', prevJ, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', J_det_exact, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', prevJ, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 
@@ -421,10 +426,14 @@ class MonotonicThetaAndSigma(BaseExperiment):
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', J_det_exact, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 
@@ -484,10 +493,15 @@ class MonotonicZeroBudgetEveryStep(BaseExperiment):
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', J_det_exact, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 
@@ -549,10 +563,16 @@ class NoWorseThanBaselineEveryStep(BaseExperiment):
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', J_det_exact, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -618,16 +638,29 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
 
         while iteration < self.constr.max_iter:
             iteration+=1
-            J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            try:
+                J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            except:
+                try:
+                    J_det_exact = self.evaluate(policy.theta_mat, 0)
+                except:
+                    J_det_exact = 0
+
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
 
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -746,16 +779,29 @@ class ExpBudget_SemiDetPolicy(BaseExperiment):
 
         while iteration < self.constr.max_iter:
             iteration+=1
-            J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            #J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            try:
+                J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            except:
+                try:
+                    J_det_exact = self.evaluate(policy.theta_mat, 0)
+                except:
+                    J_det_exact = 0
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
 
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -972,10 +1018,16 @@ class SimultaneousThetaAndSigma_half(BaseExperiment):
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -1058,10 +1110,16 @@ class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -1143,10 +1201,16 @@ class SimultaneousThetaAndSigma_two_thirds_sigma(BaseExperiment):
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
