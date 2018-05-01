@@ -118,6 +118,9 @@ class GaussPolicy:
         if not c==None:
             return c
 
+        if R == 0:
+            return 10**9
+
         return float(R*M**2)/((1-gamma)**2*self.sigma**2)* \
             (float(volume)/math.sqrt(2*math.pi*self.sigma**2) + \
                 float(gamma)/(2*(1-gamma)))

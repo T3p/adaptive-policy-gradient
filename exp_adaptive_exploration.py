@@ -8,7 +8,9 @@ import utils
 import adaptive_exploration
 import math
 import os
+import continuous_acrobot
 import mass
+import fast_utils
 
 from gym.utils import seeding
 
@@ -61,7 +63,7 @@ def run(experiment_class='Experiment',
         env = env.env
     #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
     gamma = 0.99
-    H = 200#env.horizon
+    H = 1000#env.horizon
 
     try:
         tp = TaskProp(gamma,H,env.min_action,env.max_action)
@@ -94,7 +96,13 @@ def run(experiment_class='Experiment',
     pol = ExpGaussPolicy(theta_0,w)
 
     #Features
+
     feature_fun = utils.identity
+    feature_fun = fast_utils.normalize_cartpole
+    # feature_fun = fast_utils.normalize_pendulum
+    # feature_fun = fast_utils.make_phi_pendulum()
+    #feature_fun = fast_utils.make_phi_mountain_car()
+    feature_fun = fast_utils.normalize_mountain_car
 
     #Constraints
     constr = OptConstr(
@@ -119,7 +127,7 @@ def run(experiment_class='Experiment',
     experiment = AVAILABLE_EXPERIMENTS[experiment_class]
     exp = experiment(env_name, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed)
 
-    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()))
+    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()), gamma=0.99)
 
 
 

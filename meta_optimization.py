@@ -149,7 +149,7 @@ class MetaSelector(object):
     """Meta-parameters for the policy gradient problem"""
     def __init__(self,alpha,N, coordinate=True):
         self.coordinate = coordinate
-        self.alpha = np.atleast_1d(alpha)
+        self.alpha = float(alpha)#np.atleast_1d(alpha)
         self.N = N
 
     def select_alpha(self,policy,gradients,tp,N_pre,iteration, budget=None):

@@ -6,6 +6,7 @@ import gym
 from scipy import stats
 import lqg1d
 import cartpole
+import continuous_acrobot
 from joblib import Parallel,delayed
 import multiprocessing
 import tempfile,os
@@ -116,6 +117,8 @@ class BaseExperiment(object):
             self.fast_step = fast_utils.step_mountain_car
         elif self.env_name == 'ContCartPole-v0':
             self.fast_step = fast_utils.step_cartpole
+        # elif self.env_name == 'Pendulum-v0':
+        #     self.fast_step = fast_utils.step_pendulum
         else:
             self.fast_step = None
         self.env = gym.make(env_name)
@@ -339,8 +342,8 @@ class CollectDataExperiment(BaseExperiment):
 
 
 class MonotonicOnlyTheta(BaseExperiment):
-    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.0):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -361,6 +364,7 @@ class MonotonicOnlyTheta(BaseExperiment):
         while iteration < self.constr.max_iter:
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
 
             J_journey = 0
@@ -369,7 +373,7 @@ class MonotonicOnlyTheta(BaseExperiment):
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', prevJ, '\t', J_det_exact, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             # if verbose:
             #     if iteration % 50 == 1:
@@ -396,8 +400,8 @@ class MonotonicOnlyTheta(BaseExperiment):
         self.save_data(filename)
 
 class MonotonicThetaAndSigma(BaseExperiment):
-    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -462,8 +466,8 @@ class MonotonicThetaAndSigma(BaseExperiment):
         self.save_data(filename)
 
 class MonotonicZeroBudgetEveryStep(BaseExperiment):
-    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -532,8 +536,8 @@ class MonotonicZeroBudgetEveryStep(BaseExperiment):
         self.save_data(filename)
 
 class NoWorseThanBaselineEveryStep(BaseExperiment):
-    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -608,9 +612,10 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
             use_local_stats=False,  # Update task prop only with local stats
             parallel=True,
             filename=generate_filename(),
-            verbose=False):
+            verbose=False,
+            gamma = 1.):
 
-        self.use_local_stats = True
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -671,6 +676,7 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
             if iteration > 1:
                 self.budget += N3*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
@@ -750,9 +756,10 @@ class ExpBudget_SemiDetPolicy(BaseExperiment):
             use_local_stats=False,  # Update task prop only with local stats
             parallel=True,
             filename=generate_filename(),
-            verbose=False):
+            verbose=False,
+            gamma=1.):
 
-        self.use_local_stats = True
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -812,6 +819,7 @@ class ExpBudget_SemiDetPolicy(BaseExperiment):
             if iteration > 1:
                 self.budget += N3*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
@@ -890,9 +898,10 @@ class ExpBudget_DetPolicy(BaseExperiment):
             use_local_stats=False,  # Update task prop only with local stats
             parallel=True,
             filename=generate_filename(),
-            verbose=False):
+            verbose=False,
+            gamma=1.):
 
-        self.use_local_stats = True
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -938,6 +947,7 @@ class ExpBudget_DetPolicy(BaseExperiment):
             if iteration > 1:
                 self.budget += N3*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
@@ -983,8 +993,8 @@ class ExpBudget_DetPolicy(BaseExperiment):
 
 
 class SimultaneousThetaAndSigma_half(BaseExperiment):
-    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -1039,6 +1049,7 @@ class SimultaneousThetaAndSigma_half(BaseExperiment):
             if iteration > 1:
                 self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, _, _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1//2, iteration, self.budget)
@@ -1075,8 +1086,8 @@ class SimultaneousThetaAndSigma_half(BaseExperiment):
 
 
 class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
-    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -1131,6 +1142,7 @@ class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
             if iteration > 1:
                 self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, _, _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1//3, iteration, self.budget)
@@ -1166,8 +1178,8 @@ class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
 
 
 class SimultaneousThetaAndSigma_two_thirds_sigma(BaseExperiment):
-    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -1222,6 +1234,7 @@ class SimultaneousThetaAndSigma_two_thirds_sigma(BaseExperiment):
             if iteration > 1:
                 self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, _, _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, 2*N1//3, iteration, self.budget)
