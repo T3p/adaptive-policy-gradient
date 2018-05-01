@@ -57,6 +57,6 @@ class Mass(LQG):
         return super(Mass, self).step(u, render)
 
     def reset(self, state=None):
-        x = super(Mass, self).reset(state)
+        x = -self.max_pos #super(Mass, self).reset(state)
         self.state = np.hstack((x, 0.))
         return self.state

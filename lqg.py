@@ -67,7 +67,7 @@ class LQG(gym.Env):
     def step(self, action, render=False):
         u = np.clip(action, -self.max_action, self.max_action)
         noise = 0
-        if self.sigma_noise > 0:
+        if (self.sigma_noise > 0).any():
             noise = self.np_random.randn() * self.sigma_noise
         xn = np.clip(np.dot(self.A, self.state) + np.dot(self.B, u) + noise, -self.max_pos, self.max_pos)
         cost = np.dot(self.state,
@@ -340,7 +340,7 @@ class LQG(gym.Env):
 
 if __name__ == '__main__':
 
-    env = LQG1D()
+    env = LQG()
     theta_star = env.computeOptimalK()
     print('theta^* = ', theta_star)
-    print('J^* = ', env.computeJ(theta_star,env.sigma_controller))
+    print('J^* = ', env.computeJ(theta_star,env.sigma_noise))
