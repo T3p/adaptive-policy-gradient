@@ -19,6 +19,10 @@ from utils import maybe_make_dir, zero_fun
 import argparse
 
 
+from rllab.envs.box2d.cartpole_env import CartpoleEnv
+from rllab.envs.normalized_env import normalize
+
+
 AVAILABLE_EXPERIMENTS = {
         'MonotonicOnlyTheta' : adaptive_exploration.MonotonicOnlyTheta,
         'MonotonicThetaAndSigma' : adaptive_exploration.MonotonicThetaAndSigma,
@@ -57,13 +61,13 @@ def run(experiment_class='Experiment',
         print("ALPHA IS NOT NONE")
         meta_selector = ConstMeta(alpha=alpha, N=None, coordinate=True)
 
-    env = gym.make(env_name)
-    # Tweak for mountain car
-    if 'env' in env.__dict__:
-        env = env.env
+    # env = gym.make(env_name)
+    # # Tweak for mountain car
+    # if 'env' in env.__dict__:
+    #     env = env.env
     #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
     gamma = 0.99
-    H = 500#env.horizon
+    H = 100#env.horizon
 
     try:
         tp = TaskProp(gamma,H,env.min_action,env.max_action)
@@ -90,19 +94,23 @@ def run(experiment_class='Experiment',
 
     #Policy
     theta_0 = theta
-    theta_0 = np.random.uniform(-1, 1, 4)
+    #theta_0 = np.random.uniform(-1, 1, 4)
     #w = np.array([[math.log(1), 0], [0, math.log(1)]])#math.log(env.sigma_controller)
     w = np.array([math.log(sigma)])
     pol = ExpGaussPolicy(theta_0,w)
 
     #Features
 
-    feature_fun = utils.identity
-    feature_fun = fast_utils.normalize_cartpole
-    # feature_fun = fast_utils.normalize_pendulum
-    # feature_fun = fast_utils.make_phi_pendulum()
-    #feature_fun = fast_utils.make_phi_mountain_car()
-    #feature_fun = fast_utils.normalize_mountain_car
+    if env_name == 'MountainCarContinuous-v0':
+        feature_fun = fast_utils.normalize_mountain_car
+    elif (env_name == 'ContCartPole-v0') or (env_name == 'ContCartPoleRLLab'):
+        feature_fun = fast_utils.normalize_cartpole
+    elif env_name == 'RLLAB:Cartpole':
+        feature_fun = fast_utils.normalize_cartpole_rllab
+    else:
+        feature_fun = utils.identity
+
+
 
     #Constraints
     constr = OptConstr(
@@ -143,7 +151,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', dest='batch_size', default=100, type=int, help='Specify batch size')
     parser.add_argument('--max_iters', dest='max_iters', default=2000, type=int, help='Maximum number of iterations')
     parser.add_argument('--filepath', dest='filepath', default='experiments', type=str, help='Where to save the data')
-    parser.add_argument('--random_seed', dest='random_seed', default=seeding.create_seed(), type=int, help='Random seed')
+    parser.add_argument('--random_seed', dest='random_seed', default=seeding.hash_seed(), type=int, help='Random seed')
     parser.add_argument('--experiment_class', dest='experiment_class', default=list(AVAILABLE_EXPERIMENTS.keys())[0], type=str, help='type of experiment: ' + ', '.join(AVAILABLE_EXPERIMENTS.keys()))
     parser.add_argument('--env_name', dest='env_name', type=str, default='LQG1D-v0', help='Name of gym environment')
     parser.add_argument('--confidence', dest='confidence', type=int, default=1, help='Multiply every step size by confidence')

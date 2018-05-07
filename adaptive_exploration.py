@@ -20,7 +20,6 @@ from gradient_estimation import performance, Estimator, Estimators
 
 import time
 import signal
-import tables
 import random
 
 from utils import zero_fun, identity, generate_filename, split_batch_sizes
@@ -30,6 +29,9 @@ import os
 
 import fast_utils
 from fast_utils import step_mountain_car
+
+from rllab.envs.box2d.cartpole_env import CartpoleEnv
+from rllab.envs.normalized_env import normalize
 
 #Trajectory (can be run in parallel)
 def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False, fast_step = None):
@@ -95,12 +97,17 @@ def process_initializer(q, env_name):
     seed = q.get()
     #p.env = env
     # p.env = gym.make('LQG1D-v0')
-    p.env = gym.make(env_name)
-    if 'env' in p.env.__dict__:
-        p.env = p.env.env
-    p.env.seed(seed)
+    # p.env = gym.make(env_name)
     np.random.seed(seed % 2**32)
     random.seed(seed)
+    if env_name.startswith('RLLAB:'):
+        p.env = normalize(CartpoleEnv())
+    else:
+        p.env = gym.make(env_name)
+        if 'env' in p.env.__dict__:
+            p.env = p.env.env
+        p.env.seed(seed)
+
 
 
 class BaseExperiment(object):
@@ -120,11 +127,16 @@ class BaseExperiment(object):
             self.fast_step = fast_utils.step_cartpole
         elif self.env_name == 'ContCartPoleRLLab-v0':
             self.fast_step = fast_utils.step_cartpole_rllab
-        # elif self.env_name == 'Pendulum-v0':
-        #     self.fast_step = fast_utils.step_pendulum
         else:
             self.fast_step = None
-        self.env = gym.make(env_name)
+
+        if self.env_name.startswith('RLLAB:'):
+            self.fast_step = None
+            self.env = normalize(CartpoleEnv())
+        else:
+            self.env = gym.make(env_name)
+            self.env.seed(random_seed)
+
 
 
         self.task_prop = task_prop
@@ -144,7 +156,6 @@ class BaseExperiment(object):
         self.random_seed = random_seed
         np.random.seed(random_seed % 2**32)
         random.seed(random_seed)
-        self.env.seed(random_seed)
 
     def get_param_list(self, params):
         """Returns a dictionary containing all the data related to an experiment
