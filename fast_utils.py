@@ -116,7 +116,7 @@ def step_mountain_car(prev_state, action):
     reward = 0
     if done:
         reward = 100.0
-    reward-= math.pow(action[0],2)*0.1
+    reward-= 0.001#math.pow(action[0],2)*0.1
 
     new_state = np.zeros(2)
     new_state[0] = position
@@ -208,6 +208,54 @@ def step_cartpole(prev_state, action):
         reward = 0.0
 
     return np.array(state), reward, done, None
+
+
+
+@numba.jit(nopython=True)
+def step_cartpole_rllab(prev_state, action):
+    gravity = 9.8
+    masscart = 1.0
+    masspole = 0.1
+    total_mass = (masspole + masscart)
+    length = 0.5 # actually half the pole's length
+    polemass_length = (masspole * length)
+    force_mag = 10.0
+    tau = 0.02  # seconds between state updates
+
+    # Angle at which to fail the episode
+    theta_threshold_radians = 12 * 2 * math.pi / 360
+    x_threshold = 2.4
+
+
+    force = min(max(action[0], -force_mag), force_mag)
+
+    x, x_dot, theta, theta_dot = prev_state
+
+
+    costheta = math.cos(theta)
+    sintheta = math.sin(theta)
+    temp = (force + polemass_length * theta_dot * theta_dot * sintheta) / total_mass
+    thetaacc = (gravity * sintheta - costheta* temp) / (length * (4.0/3.0 - masspole * costheta * costheta / total_mass))
+    xacc  = temp - polemass_length * thetaacc * costheta / total_mass
+    x  = x + tau * x_dot
+    x_dot = x_dot + tau * xacc
+    theta = theta + tau * theta_dot
+    theta_dot = theta_dot + tau * thetaacc
+
+    state = (x,x_dot,theta,theta_dot)
+    done =  x < -x_threshold \
+            or x > x_threshold \
+            or theta < -theta_threshold_radians \
+            or theta > theta_threshold_radians
+    done = bool(done)
+
+    if not done:
+        reward = 10.0 - (1 - math.cos(theta_dot)) - 1e-5 * (action[0])**2
+    else:
+        reward = 0.0
+
+    return np.array(state), reward, done, None
+
 
 
 

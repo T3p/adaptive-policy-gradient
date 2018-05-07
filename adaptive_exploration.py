@@ -6,6 +6,7 @@ import gym
 from scipy import stats
 import lqg1d
 import cartpole
+import cartpole_rllab
 import continuous_acrobot
 from joblib import Parallel,delayed
 import multiprocessing
@@ -117,6 +118,8 @@ class BaseExperiment(object):
             self.fast_step = fast_utils.step_mountain_car
         elif self.env_name == 'ContCartPole-v0':
             self.fast_step = fast_utils.step_cartpole
+        elif self.env_name == 'ContCartPoleRLLab-v0':
+            self.fast_step = fast_utils.step_cartpole_rllab
         # elif self.env_name == 'Pendulum-v0':
         #     self.fast_step = fast_utils.step_pendulum
         else:
@@ -135,7 +138,7 @@ class BaseExperiment(object):
         self.count = 0
         self.descs = None
 
-        self.n_cores = multiprocessing.cpu_count()
+        self.n_cores = multiprocessing.cpu_count() // 2
         self.name = name
 
         self.random_seed = random_seed
