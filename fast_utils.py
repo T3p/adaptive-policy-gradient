@@ -250,7 +250,7 @@ def step_cartpole_rllab(prev_state, action):
     done = bool(done)
 
     if not done:
-        reward = 10.0 - (1 - math.cos(theta_dot)) - 1e-5 * (action[0])**2
+        reward = 10.0 - (1 - math.cos(theta_dot)) - 10e-5 * (action[0])**2
     else:
         reward = 0.0
 
