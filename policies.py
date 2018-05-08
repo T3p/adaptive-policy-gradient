@@ -139,11 +139,13 @@ class GaussPolicy:
 class ExpGaussPolicy(GaussPolicy):
     """Scalar implementation of a Gaussian Policy with variance parameterized with an exponential function
     """
-    def __init__(self,theta,w):
+    def __init__(self,theta,w, min_sigma=0.0001, max_sigma=10.):
         w = np.atleast_2d(w)
         assert(utils.is_diagonal(w))
 
         self.w = w
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
         super().__init__(theta, np.diag(np.exp(np.diagonal(w))))
 
     def update_w(self, deltaW):
@@ -152,6 +154,7 @@ class ExpGaussPolicy(GaussPolicy):
         deltaW = np.atleast_2d(deltaW)
 
         self.w += deltaW
+        self.w = np.clip(self.w, math.log(self.min_sigma), math.log(self.max_sigma))
 
         #self.cov = np.asmatrix(math.exp(self.w))
         self.cov = np.atleast_2d(np.diag(np.exp(np.diagonal(self.w))))

@@ -25,6 +25,7 @@ from rllab.envs.normalized_env import normalize
 
 AVAILABLE_EXPERIMENTS = {
         'MonotonicOnlyTheta' : adaptive_exploration.MonotonicOnlyTheta,
+        'MonotonicNaiveGradient' : adaptive_exploration.MonotonicNaiveGradient,
         'MonotonicThetaAndSigma' : adaptive_exploration.MonotonicThetaAndSigma,
         'MonotonicZeroBudgetEveryStep' : adaptive_exploration.MonotonicZeroBudgetEveryStep,
         'NoWorseThanBaselineEveryStep' : adaptive_exploration.NoWorseThanBaselineEveryStep,
@@ -67,7 +68,7 @@ def run(experiment_class='Experiment',
     #     env = env.env
     #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
     gamma = 0.99
-    H = 100#env.horizon
+    H = 500#env.horizon
 
     try:
         tp = TaskProp(gamma,H,env.min_action,env.max_action)
@@ -93,8 +94,9 @@ def run(experiment_class='Experiment',
     local = True
 
     #Policy
-    theta_0 = theta
-    #theta_0 = np.random.uniform(-1, 1, 4)
+    #theta_0 = theta
+    np.random.seed(random_seed)
+    theta_0 = np.random.normal(0, 0.1, 4)
     #w = np.array([[math.log(1), 0], [0, math.log(1)]])#math.log(env.sigma_controller)
     w = np.array([math.log(sigma)])
     pol = ExpGaussPolicy(theta_0,w)
@@ -114,12 +116,12 @@ def run(experiment_class='Experiment',
 
     #Constraints
     constr = OptConstr(
-                delta = 0.2,
+                delta = 0.9,
                 N_min=batch_size,
                 N_max=500000,
                 N_tot = 30000000,
                 max_iter = max_iters,
-                approximate_gradients=False
+                approximate_gradients=True
     )
 
     #Evaluation of expected performance
