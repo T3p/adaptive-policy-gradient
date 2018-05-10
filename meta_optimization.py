@@ -144,6 +144,32 @@ def estError(d,f,N):
     """
     return float(d)/math.sqrt(N) + float(f)/N
 
+class AdamOptimizer(object):
+    def __init__(self, alpha=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
+        self.alpha = alpha
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        self.t = 0
+
+        self.m0 = 0
+        self.v0 = 0
+
+        self.mt = 0
+        self.vt = 0
+
+    def select(self, gradients):
+        self.t += 1
+
+        gt = gradients['grad_theta']
+        self.mt = self.beta1 * self.mt + (1 - self.beta1) * gt
+        self.vt = self.beta2 * self.vt + (1 - self.beta2) * gt**2
+
+        mt_hat = self.mt / (1 - self.beta1**self.t)
+        vt_hat = self.vt / (1 - self.beta2**self.t)
+
+        return self.alpha * mt_hat / (np.sqrt(vt_hat) + self.epsilon)
+
 
 class MetaSelector(object):
     """Meta-parameters for the policy gradient problem"""
@@ -157,7 +183,7 @@ class MetaSelector(object):
 
         if self.coordinate == True:
             step = np.zeros(m)
-            step[np.argmax(gradients['grad_theta'])] = self.alpha
+            step[np.argmax(np.abs(gradients['grad_theta']))] = self.alpha
         else:
             step = np.ones(m) * self.alpha
 
@@ -194,7 +220,7 @@ class BudgetMetaSelector(object):
 
         if self.coordinate == True:
             step = np.zeros(m)
-            step[np.argmax(gradients['grad_theta'])] = alpha_star
+            step[np.argmax(np.abs(gradients['grad_theta']))] = alpha_star
         else:
             step = np.ones(m) * alpha_star
 

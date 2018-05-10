@@ -54,9 +54,8 @@ class LQG1D(gym.Env):
         high = np.array([self.max_pos])
         self.action_space = spaces.Box(low=-self.max_action,
                                        high=self.max_action,
-                                       shape=(1,),
-                                       dtype=np.float32)
-        self.observation_space = spaces.Box(low=-high, high=high, dtype=np.float32)
+                                       shape=(1,))
+        self.observation_space = spaces.Box(low=-high, high=high)
 
         self.initial_states = np.array([[1, 2, 5, 7, 10]]).T
 

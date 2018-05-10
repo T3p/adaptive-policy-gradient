@@ -24,6 +24,7 @@ from rllab.envs.normalized_env import normalize
 
 
 AVAILABLE_EXPERIMENTS = {
+        'AdamOnlyTheta': adaptive_exploration.AdamOnlyTheta,
         'MonotonicOnlyTheta' : adaptive_exploration.MonotonicOnlyTheta,
         'MonotonicNaiveGradient' : adaptive_exploration.MonotonicNaiveGradient,
         'MonotonicThetaAndSigma' : adaptive_exploration.MonotonicThetaAndSigma,
@@ -60,7 +61,7 @@ def run(experiment_class='Experiment',
         meta_selector = BudgetMetaSelector(confidence=confidence)
     else:
         print("ALPHA IS NOT NONE")
-        meta_selector = ConstMeta(alpha=alpha, N=None, coordinate=True)
+        meta_selector = ConstMeta(alpha=alpha, N=None, coordinate=False)
 
     # env = gym.make(env_name)
     # # Tweak for mountain car
@@ -94,9 +95,9 @@ def run(experiment_class='Experiment',
     local = True
 
     #Policy
-    #theta_0 = theta
+    theta_0 = theta
     np.random.seed(random_seed)
-    theta_0 = np.random.normal(0, 0.1, 4)
+    #theta_0 = np.random.normal(0, 0.1, 4)
     #w = np.array([[math.log(1), 0], [0, math.log(1)]])#math.log(env.sigma_controller)
     w = np.array([math.log(sigma)])
     pol = ExpGaussPolicy(theta_0,w)
@@ -108,7 +109,8 @@ def run(experiment_class='Experiment',
     elif (env_name == 'ContCartPole-v0') or (env_name == 'ContCartPoleRLLab'):
         feature_fun = fast_utils.normalize_cartpole
     elif env_name == 'RLLAB:Cartpole':
-        feature_fun = fast_utils.normalize_cartpole_rllab
+        # feature_fun = fast_utils.normalize_cartpole_rllab
+        feature_fun = utils.identity
     else:
         feature_fun = utils.identity
 

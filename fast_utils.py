@@ -9,7 +9,9 @@ from gym.utils import seeding
 from numpy import sin, cos, pi
 
 def normalize_cartpole_rllab(s):
-    return np.array([s[0] / 0.1, s[1] / 0.5, s[2] / 0.5, s[3]])
+    #return np.array([s[0] / 0.1, s[1] / 0.5, s[2] / 0.5, s[3]])
+    #return np.array([s[0], s[1]/2, s[2]/0.5, s[3]/2.2])
+    return s * np.array([1, .3, 2, .1])
 
 def normalize_cartpole(s):
     a = 12 * 2 * math.pi / 360

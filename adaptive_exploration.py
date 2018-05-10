@@ -368,6 +368,74 @@ class CollectDataExperiment(BaseExperiment):
             ]
 
 
+class AdamOnlyTheta(BaseExperiment):
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.0):
+        self.use_local_stats = False
+        self.initial_configuration = self.get_param_list(locals())
+        self.estimator = Estimators(self.task_prop, self.constr)
+
+        N = self.constr.N_min
+
+        adam_selector = AdamOptimizer()
+
+        if parallel:
+            self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+        # COMPUTE BASELINES
+        features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+
+        #Learning
+        iteration = 0; N_tot = 0; J_hat = prevJ
+        J_journey = prevJ
+        start_time = time.time()
+
+        while iteration < self.constr.max_iter:
+            iteration+=1
+            J_det_exact = self.evaluate(policy, deterministic=True)
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
+            J_journey = 0
+
+            # PRINT
+            if verbose:
+                if iteration % 50 == 1:
+                    print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+                print(iteration, '\t', N, '\t', prevJ, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', prevJ, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+            J_journey += J_hat * N
+
+            delta_theta = adam_selector.select(gradients)
+            policy.update(delta_theta)
+
+            J_journey /= N
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached\nEnd experiment')
+                break
+
+        # SAVE DATA
+
+        self.save_data(filename)
+
+
 class MonotonicOnlyTheta(BaseExperiment):
     def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.0):
         self.use_local_stats = False
