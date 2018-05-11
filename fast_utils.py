@@ -358,6 +358,8 @@ def step_acrobot(prev_obs, action):
 
     terminal = bool(-np.cos(s[0]) - np.cos(s[1] + s[0]) > 1.)
     reward = -1. if not terminal else 0.
+    # reward *= 0.001 * action[0]**2
+    # reward += terminal * 100
 
     state = np.array([cos(s[0]), np.sin(s[0]), cos(s[1]), sin(s[1]), s[2], s[3]])
 
@@ -367,10 +369,13 @@ def step_acrobot(prev_obs, action):
 
 @numba.jit(nopython=True)
 def _dsdt(s_augmented, t):
-    book_or_nips = "book"
+    book_or_nips = "nips"
     m1 = 1.
+    m1 = 2.       # LINK MASS 2 @CHANGED
     m2 = 1.
+    # m2 = 2.    # link mass 2 @CHANGED
     l1 = 1.
+    # l1 = 2.       # LINK LENGTH 1
     lc1 = 0.5
     lc2 = 0.5
     I1 = 1.

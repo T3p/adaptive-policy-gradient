@@ -135,6 +135,8 @@ class BaseExperiment(object):
             self.fast_step = fast_utils.step_cartpole
         elif self.env_name == 'ContCartPoleRLLab-v0':
             self.fast_step = fast_utils.step_cartpole_rllab
+        elif self.env_name == 'ContinuousAcrobot-v0':
+            self.fast_step = fast_utils.step_acrobot
         else:
             self.fast_step = None
 
