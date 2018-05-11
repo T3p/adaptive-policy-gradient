@@ -127,10 +127,11 @@ def run(experiment_class='Experiment',
     )
 
     #Evaluation of expected performance
-    # def evaluate(pol,deterministic=False):
-    #     var = 0 if deterministic else pol.cov
-    #     return env.computeJ(pol.theta_mat,var)
-    evaluate = zero_fun
+    def evaluate(pol,deterministic=False):
+        var = 0 if deterministic else pol.cov
+        # return env.computeJ(pol.theta_mat,var)
+        return utils.calc_J(pol.theta_mat, 0.9, 0.9, gamma, var, 4.0, 1)
+    # evaluate = zero_fun
     #Run
     # exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
     # exp = adaptive_exploration.CollectDataExperiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)

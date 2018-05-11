@@ -1,7 +1,10 @@
 import multiprocessing
-from exp_lqg_budget import run, AVAILABLE_EXPERIMENTS
+# from exp_lqg_budget import run, AVAILABLE_EXPERIMENTS
+from exp_adaptive_exploration import run
 import utils
 import math
+import numpy as np
+import itertools
 
 def run_all():
     BATCH_SIZE = 300
@@ -28,6 +31,38 @@ def run_all():
     p = multiprocessing.Pool()
     p.starmap(run, args)
 
+def run_grid():
+    BATCH_SIZE = 300
+    MAX_ITERS = 10000
+    FILEPATH = 'GRID_LQG'
+
+    utils.maybe_make_dir(FILEPATH)
+
+    THETA_INIT = np.array([-0.1])
+    ALGORITHMS = ['MonotonicOnlyTheta', 'ExpBudget_NoDetPolicy', 'NoWorseThanBaselineEveryStep']
+    INITIAL_SIGMA = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1]
+    ALPHA = [0.0001, 0.00001, 0.000001, 0.0000001, 0.00000001]
+    RANDOM_SEED = [1]
+
+    args = []
+
+    for exp, sigma, seed in itertools.product(ALGORITHMS, INITIAL_SIGMA, RANDOM_SEED):
+        name = exp + '_' + str(seed)
+
+        args.append([exp, 'LQG1D-v0', name, BATCH_SIZE, MAX_ITERS, FILEPATH, seed, False, True, 1, sigma, THETA_INIT, None])
+
+    for sigma, alpha, seed in itertools.product(INITIAL_SIGMA, ALPHA, RANDOM_SEED):
+        exp = 'MonotonicNaiveGradient'
+        name = exp + '_' + str(alpha) + '_' + str(seed)
+
+        args.append([exp, 'LQG1D-v0', name, BATCH_SIZE, MAX_ITERS, FILEPATH, seed, False, True, 1, sigma, THETA_INIT, alpha])
+
+
+
+    p = multiprocessing.Pool()
+    p.starmap(run, args)
+
 
 if __name__ == '__main__':
-    run_all()
+    # run_all()
+    run_grid()

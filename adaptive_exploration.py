@@ -855,6 +855,7 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
                     J_det_exact = self.evaluate(policy.theta_mat, 0)
                 except:
                     J_det_exact = 0
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
 
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
             if iteration % SAVE_FREQ == 0:

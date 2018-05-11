@@ -361,11 +361,13 @@ class Estimators(object):
         idxs_theta = np.indices(cum_scores_theta.shape)[1]
         idxs_w = np.indices(cum_scores_w.shape)[1]
 
-        cum_scores_theta = np.ma.array(cum_scores_theta, mask=idxs_theta > trace_lengths.reshape((-1, 1, 1)))# if pol.feat_dim>1 else (-1, 1)))
-        cum_scores_w = np.ma.array(cum_scores_w, mask=idxs_w > trace_lengths.reshape(-1, 1))
-        cum_scores_sigma = np.ma.array(cum_scores_sigma, mask=idxs_w > trace_lengths.reshape(-1, 1))
-        disc_rewards = np.ma.array(disc_rewards, mask=np.indices(disc_rewards.shape)[1] > trace_lengths.reshape(-1, 1))
+        if np.min(trace_lengths) != H:
 
+            cum_scores_theta = np.ma.array(cum_scores_theta, mask=idxs_theta > trace_lengths.reshape((-1, 1, 1)))# if pol.feat_dim>1 else (-1, 1)))
+            cum_scores_w = np.ma.array(cum_scores_w, mask=idxs_w > trace_lengths.reshape(-1, 1))
+            cum_scores_sigma = np.ma.array(cum_scores_sigma, mask=idxs_w > trace_lengths.reshape(-1, 1))
+            disc_rewards = np.ma.array(disc_rewards, mask=np.indices(disc_rewards.shape)[1] > trace_lengths.reshape(-1, 1))
+            
         #Optimal baseline:
         if use_baseline and N>=1:
             b_theta = _compute_baseline_theta_gpomdp(cum_scores_theta, disc_rewards)
