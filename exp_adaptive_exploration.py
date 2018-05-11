@@ -130,7 +130,7 @@ def run(experiment_class='Experiment',
     def evaluate(pol,deterministic=False):
         var = 0 if deterministic else pol.cov
         # return env.computeJ(pol.theta_mat,var)
-        return utils.calc_J(pol.theta_mat, 0.9, 0.9, gamma, var, 4.0, 1)
+        return utils.calc_J(pol.theta_mat[0,0], 0.9, 0.9, gamma, var, 4.0, 1)
     # evaluate = zero_fun
     #Run
     # exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)

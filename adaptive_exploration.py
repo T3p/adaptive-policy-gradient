@@ -759,6 +759,7 @@ class NoWorseThanBaselineEveryStep(BaseExperiment):
         while iteration < self.constr.max_iter:
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
             if iteration % SAVE_FREQ == 0:
                 self.save_data(filename)
