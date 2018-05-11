@@ -449,3 +449,31 @@ def step_pendulum(prev_obs, a):
 
     new_obs = np.array([np.cos(newth), np.sin(newth), newthdot])
     return new_obs, -costs, False, None
+
+@numba.jit(nopython=True)
+def step_lqg(state, action):
+    horizon = 20
+    gamma = 0.99
+
+    max_pos = 4.0
+    max_action = 4.0
+    sigma_noise = 0
+    A = 1
+    B = 1
+    Q = 0.9
+    R = 0.9
+
+    u = min(max(action[0], -4.0), 4.0)# np.clip(action, -self.max_action, self.max_action)
+    noise = 0
+
+    xn = min(max(A * state[0] + B*u + noise, -4.0), 4.0)
+    cost = state[0] * Q * state[0] + u * R * u
+    state = np.array([xn])
+    #xn = np.clip(np.dot(self.A, self.state) + np.dot(self.B, u) + noise, -self.max_pos, self.max_pos)
+    # cost = np.dot(self.state,
+    #               np.dot(self.Q, self.state)) + \
+    #     np.dot(u, np.dot(self.R, u))
+
+    # self.state = np.array(xn.ravel())
+
+    return state, -cost, False, None

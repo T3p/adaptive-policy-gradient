@@ -129,7 +129,10 @@ class BaseExperiment(object):
                 name = 'Budget exp',
                 random_seed = 2**32+4):
         self.env_name = env_name
-        if self.env_name == 'MountainCarContinuous-v0':
+        if self.env_name == 'LQG1D-v0':
+            self.fast_step = fast_utils.step_lqg
+            # self.fast_step = None
+        elif self.env_name == 'MountainCarContinuous-v0':
             self.fast_step = fast_utils.step_mountain_car
         elif self.env_name == 'ContCartPole-v0':
             self.fast_step = fast_utils.step_cartpole
@@ -509,7 +512,7 @@ class MonotonicNaiveGradient(BaseExperiment):
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
-        N = self.constr.N_min       # Total number of trajectories to take in this iteration
+        N = self.constr.N_min // 2       # Total number of trajectories to take in this iteration
 
         #Multiprocessing preparation
         if parallel:

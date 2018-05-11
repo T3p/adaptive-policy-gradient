@@ -69,7 +69,7 @@ def run(experiment_class='Experiment',
     #     env = env.env
     #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
     gamma = 0.99
-    H = 500#env.horizon
+    H = 100#env.horizon
 
     try:
         tp = TaskProp(gamma,H,env.min_action,env.max_action)
@@ -139,7 +139,7 @@ def run(experiment_class='Experiment',
     experiment = AVAILABLE_EXPERIMENTS[experiment_class]
     exp = experiment(env_name, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed)
 
-    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()), gamma=0.99)
+    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()), gamma=1)
 
 
 
