@@ -161,7 +161,7 @@ class AdamOptimizer(object):
     def select(self, gradients):
         self.t += 1
 
-        gt = gradients['grad_theta']
+        gt = np.hstack([gradients['grad_theta'], gradients['grad_w']])
         self.mt = self.beta1 * self.mt + (1 - self.beta1) * gt
         self.vt = self.beta2 * self.vt + (1 - self.beta2) * gt**2
 

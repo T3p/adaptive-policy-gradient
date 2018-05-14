@@ -374,15 +374,18 @@ class CollectDataExperiment(BaseExperiment):
             ]
 
 
-class AdamOnlyTheta(BaseExperiment):
+class Adam(BaseExperiment):
     def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.0):
         self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
         N = self.constr.N_min
-
-        adam_selector = AdamOptimizer()
+        if isinstance(self.meta_selector, ConstMeta):
+            alpha = self.meta_selector.alpha
+        else:
+            alpha = 0.001
+        adam_selector = AdamOptimizer(alpha=alpha)
 
         if parallel:
             self._enable_parallel()
@@ -428,8 +431,9 @@ class AdamOnlyTheta(BaseExperiment):
             features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
             J_journey += J_hat * N
 
-            delta_theta = adam_selector.select(gradients)
-            policy.update(delta_theta)
+            updates = adam_selector.select(gradients)
+            policy.update(updates[:policy.feat_dim])
+            policy.update_w(updates[policy.feat_dim:])
 
             J_journey /= N
             N_tot+=N

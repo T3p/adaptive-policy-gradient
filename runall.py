@@ -32,7 +32,7 @@ def run_all():
     p.starmap(run, args)
 
 def run_grid():
-    BATCH_SIZE = 300
+    BATCH_SIZE = 100
     MAX_ITERS = 10000
     FILEPATH = 'GRID_LQG'
 
@@ -42,20 +42,27 @@ def run_grid():
     ALGORITHMS = ['MonotonicOnlyTheta', 'ExpBudget_NoDetPolicy', 'NoWorseThanBaselineEveryStep']
     INITIAL_SIGMA = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1]
     ALPHA = [0.0001, 0.00001, 0.000001, 0.0000001, 0.00000001]
-    RANDOM_SEED = [1]
+    RANDOM_SEED = [1, 2, 3, 4, 5]
 
     args = []
 
     for exp, sigma, seed in itertools.product(ALGORITHMS, INITIAL_SIGMA, RANDOM_SEED):
-        name = exp + '_' + str(seed)
+        name = exp + '_' + str(sigma) + '_' + str(seed)
 
         args.append([exp, 'LQG1D-v0', name, BATCH_SIZE, MAX_ITERS, FILEPATH, seed, False, True, 1, sigma, THETA_INIT, None])
 
     for sigma, alpha, seed in itertools.product(INITIAL_SIGMA, ALPHA, RANDOM_SEED):
         exp = 'MonotonicNaiveGradient'
-        name = exp + '_' + str(alpha) + '_' + str(seed)
+        name = exp + '_' + str(alpha) + '_' + str(sigma) + '_' + str(seed)
 
         args.append([exp, 'LQG1D-v0', name, BATCH_SIZE, MAX_ITERS, FILEPATH, seed, False, True, 1, sigma, THETA_INIT, alpha])
+
+    for sigma, alpha, seed in itertools.product(INITIAL_SIGMA, ALPHA, RANDOM_SEED):
+        exp = 'Adam'
+        name = exp + '_' + str(alpha) + '_' + str(sigma) + '_' + str(seed)
+
+        args.append([exp, 'LQG1D-v0', name, BATCH_SIZE, MAX_ITERS, FILEPATH, seed, False, True, 1, sigma, THETA_INIT, alpha])
+
 
 
 

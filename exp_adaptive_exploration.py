@@ -24,7 +24,7 @@ from rllab.envs.normalized_env import normalize
 
 
 AVAILABLE_EXPERIMENTS = {
-        'AdamOnlyTheta': adaptive_exploration.AdamOnlyTheta,
+        'Adam': adaptive_exploration.Adam,
         'MonotonicOnlyTheta' : adaptive_exploration.MonotonicOnlyTheta,
         'MonotonicNaiveGradient' : adaptive_exploration.MonotonicNaiveGradient,
         'MonotonicThetaAndSigma' : adaptive_exploration.MonotonicThetaAndSigma,
