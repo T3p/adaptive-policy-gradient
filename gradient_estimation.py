@@ -367,7 +367,7 @@ class Estimators(object):
             cum_scores_w = np.ma.array(cum_scores_w, mask=idxs_w > trace_lengths.reshape(-1, 1))
             cum_scores_sigma = np.ma.array(cum_scores_sigma, mask=idxs_w > trace_lengths.reshape(-1, 1))
             disc_rewards = np.ma.array(disc_rewards, mask=np.indices(disc_rewards.shape)[1] > trace_lengths.reshape(-1, 1))
-            
+
         #Optimal baseline:
         if use_baseline and N>=1:
             b_theta = _compute_baseline_theta_gpomdp(cum_scores_theta, disc_rewards)
@@ -436,7 +436,8 @@ class Estimators(object):
             eps_w = 0
 
         #print('GRAD_THETA', grad_theta, 'GRAD_W', grad_w, 'GRAD_MIXED', grad_mixed, 'GRAD_DELTA', grad_deltaW)
-
+        # grad_deltaW = 1
+        grad_deltaW += 1e-21
 
         return {'grad_theta' : grad_theta,
                 'grad_w' : grad_w,
@@ -472,12 +473,14 @@ def _compute_baseline_theta_gpomdp(cum_scores, disc_rewards):
     np.putmask(den,den==0,1)
     return np.mean(((cum_scores**2).T*disc_rewards.T).T,0)/den
 
+
 @numba.jit
 def _compute_baseline_h(cum_scores_theta, cum_scores_sigma, disc_rewards):
     sum_theta_sigma = (cum_scores_sigma.T + cum_scores_theta.T).T
     mul_theta_sigma = (cum_scores_sigma.T * cum_scores_theta.T).T
 
-    num = np.mean((mul_theta_sigma.T * disc_rewards.T).T * sum_theta_sigma, 0)
-    den = np.mean(sum_theta_sigma**2, 0)
+    num = np.mean((mul_theta_sigma.T * disc_rewards.T).T * sum_theta_sigma, 0) * sum_theta_sigma
+    den = np.mean(sum_theta_sigma**2, 0) * mul_theta_sigma
     np.putmask(den, den==0, 1)
-    return sum_theta_sigma / mul_theta_sigma * num/den
+    return num/den
+    #return num / den

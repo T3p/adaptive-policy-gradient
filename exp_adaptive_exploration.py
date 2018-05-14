@@ -52,7 +52,8 @@ def run(experiment_class='Experiment',
         confidence = 1,
         sigma = 1,
         theta = np.array([0, 0]),
-        alpha = None
+        alpha = None,
+        initial_budget = 0
         ):
     print(experiment_class, name, batch_size, max_iters, random_seed)
     #Task
@@ -69,7 +70,7 @@ def run(experiment_class='Experiment',
     #     env = env.env
     #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
     gamma = 0.99
-    H = 100#env.horizon
+    H = 1000#env.horizon
 
     try:
         tp = TaskProp(gamma,H,env.min_action,env.max_action)
@@ -138,7 +139,7 @@ def run(experiment_class='Experiment',
     # exp = adaptive_exploration.SafeExperiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name, random_seed=random_seed)
 
     experiment = AVAILABLE_EXPERIMENTS[experiment_class]
-    exp = experiment(env_name, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed)
+    exp = experiment(env_name, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed, initial_budget=initial_budget)
 
     exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()), gamma=1)
 
@@ -156,7 +157,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', dest='batch_size', default=100, type=int, help='Specify batch size')
     parser.add_argument('--max_iters', dest='max_iters', default=2000, type=int, help='Maximum number of iterations')
     parser.add_argument('--filepath', dest='filepath', default='experiments', type=str, help='Where to save the data')
-    parser.add_argument('--random_seed', dest='random_seed', default=seeding.hash_seed(), type=int, help='Random seed')
+    parser.add_argument('--random_seed', dest='random_seed', default=seeding.hash_seed() % 2**32, type=int, help='Random seed')
     parser.add_argument('--experiment_class', dest='experiment_class', default=list(AVAILABLE_EXPERIMENTS.keys())[0], type=str, help='type of experiment: ' + ', '.join(AVAILABLE_EXPERIMENTS.keys()))
     parser.add_argument('--env_name', dest='env_name', type=str, default='LQG1D-v0', help='Name of gym environment')
     parser.add_argument('--confidence', dest='confidence', type=int, default=1, help='Multiply every step size by confidence')
@@ -165,7 +166,7 @@ if __name__ == '__main__':
     parser.add_argument('--theta', dest='theta', type=str, default = '[0,0]', help="Value for theta")
 
     parser.add_argument('--alpha', dest='alpha', type=str, default=None, help='Fixed step size')
-
+    parser.add_argument('--initial_budget', dest='initial_budget', type=float, default=0., help="Initial budget")
     args = vars(parser.parse_args())
 
     args['theta'] = np.array(eval(args['theta']))

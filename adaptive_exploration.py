@@ -127,7 +127,8 @@ class BaseExperiment(object):
                 feature_fun=identity,
                 evaluate=zero_fun,
                 name = 'Budget exp',
-                random_seed = 2**32+4):
+                random_seed = 1,
+                initial_budget = 0):
         self.env_name = env_name
         if self.env_name == 'LQG1D-v0':
             self.fast_step = fast_utils.step_lqg
@@ -160,7 +161,7 @@ class BaseExperiment(object):
         self.feature_fun = feature_fun
         self.evaluate = evaluate
 
-        self.budget = 0
+        self.budget = initial_budget
         self.data = []
         self.count = 0
         self.descs = None
