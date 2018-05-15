@@ -1,6 +1,7 @@
 import numpy as np
 from utils import *
 import numba
+import utils
 import scipy.stats
 
 """Policy gradient estimation algorithms"""
@@ -362,7 +363,7 @@ class Estimators(object):
         idxs_w = np.indices(cum_scores_w.shape)[1]
 
         if np.min(trace_lengths) != H:
-
+            print('- ', np.min(trace_lengths))
             cum_scores_theta = np.ma.array(cum_scores_theta, mask=idxs_theta > trace_lengths.reshape((-1, 1, 1)))# if pol.feat_dim>1 else (-1, 1)))
             cum_scores_w = np.ma.array(cum_scores_w, mask=idxs_w > trace_lengths.reshape(-1, 1))
             cum_scores_sigma = np.ma.array(cum_scores_sigma, mask=idxs_w > trace_lengths.reshape(-1, 1))
@@ -382,8 +383,8 @@ class Estimators(object):
         estimates_theta = np.sum((cum_scores_theta.T*disc_rewards.T).T - cum_scores_theta*b_theta,1)
         estimates_w = np.sum((cum_scores_w.T*disc_rewards.T).T - cum_scores_w*b_w,1)
 
-        grad_theta = np.mean(estimates_theta,0)
-        grad_w = np.mean(estimates_w,0)
+        grad_theta = utils.removemask(np.mean(estimates_theta,0))
+        grad_w = utils.removemask(np.mean(estimates_w,0))
 
 
         # ESTIMATES H
@@ -393,7 +394,7 @@ class Estimators(object):
 
         # print('H STD: ', np.std(estimates_h, axis=0))
 
-        h_gpomdp = np.mean(estimates_h, 0)
+        h_gpomdp = utils.removemask(np.mean(estimates_h, 0))
 
         # print('h_gpomdp = ', h_gpomdp)
         # print('cum_scores_sigma_theta: ', cum_scores_sigma_theta.shape, 'b_h shape: ', b_h.shape)

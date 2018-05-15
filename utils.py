@@ -12,6 +12,11 @@ except ImportError:
 
 """Helper functions"""
 
+def removemask(array):
+    if hasattr(array, 'mask'):
+        return array.data
+    else:
+        return array
 
 def apply_along_axis2(func1d,axis,X,Y):
     """Extension of numpy.apply_along_axis to functions of two parameters"""
