@@ -52,17 +52,17 @@ class ContCartPole(gym.Env):
         self.action_space = spaces.Box(low=-self.force_mag,high=self.force_mag,shape=(1,))
         self.observation_space = spaces.Box(-high, high)
 
-        self._seed()
+        self.seed()
         self.viewer = None
         self.state = None
 
         self.steps_beyond_done = None
 
-    def _seed(self, seed=None):
+    def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def _step(self, action):
+    def step(self, action):
         action = np.ravel(action)
         assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
         state = self.state
@@ -106,7 +106,7 @@ class ContCartPole(gym.Env):
         self.steps_beyond_done = None
         return np.array(self.state)
 
-    def _render(self, mode='human', close=False):
+    def render(self, mode='human', close=False):
         if close:
             if self.viewer is not None:
                 self.viewer.close()
@@ -157,5 +157,3 @@ class ContCartPole(gym.Env):
         self.poletrans.set_rotation(-x[2])
 
         return self.viewer.render(return_rgb_array = mode=='rgb_array')
-
-

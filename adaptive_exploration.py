@@ -3,7 +3,11 @@ import sys
 import random
 import policies
 import gym
+from scipy import stats
 import lqg1d
+import cartpole
+import cartpole_rllab
+import continuous_acrobot
 from joblib import Parallel,delayed
 import multiprocessing
 import tempfile,os
@@ -16,7 +20,6 @@ from gradient_estimation import performance, Estimator, Estimators
 
 import time
 import signal
-import tables
 import random
 
 from utils import zero_fun, identity, generate_filename, split_batch_sizes
@@ -24,78 +27,154 @@ import pandas as pd
 import json
 import os
 
+import fast_utils
+from fast_utils import step_mountain_car
+
+from rllab.envs.box2d.cartpole_env import CartpoleEnv
+from rllab.envs.normalized_env import normalize
+
+SAVE_FREQ = 100
 
 #Trajectory (can be run in parallel)
-def trajectory(env,tp,pol,feature_fun,traces,n,initial=None,noises=[], deterministic=False):
-    if  len(noises)==0:
-        noises = np.random.normal(0,1,tp.H)
+def trajectory_serial(env, tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False, fast_step = None):
+    trace_length = np.zeros((batch_size,))
 
-    s = env.reset(initial)
-    # s = env.reset([-3.5])
-    for l in range(tp.H):
-        phi = feature_fun(np.ravel(s))
-        a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
-        s,r,done,_ = env.step(a)
-        traces[n,l] = np.concatenate((np.atleast_1d(phi),np.atleast_1d(a),np.atleast_1d(r)))
-        if(done):
-            break
-
-#Trajectory (can be run in parallel)
-def trajectory_parallel(tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False):
-    p = multiprocessing.current_process()
-    traces = np.zeros((batch_size, tp.H, pol.feat_dim + pol.act_dim + 1))
+    features = np.zeros((batch_size, tp.H, pol.feat_dim))
+    actions = np.zeros((batch_size, tp.H, pol.act_dim))
+    rewards = np.zeros((batch_size, tp.H))
 
     # s = env.reset([-3.5])
     for n in range(batch_size):
-        s = p.env.reset(initial)
+        s = env.reset()
+        #s = env.state = [-0.5, 0]
         noises = np.random.normal(0,1,tp.H)
+        trace_length[n] = tp.H
         for l in range(tp.H):
             phi = feature_fun(np.ravel(s))
-            a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
-            s,r,done,_ = p.env.step(a)
-            traces[n,l] = np.concatenate((np.atleast_1d(phi),np.atleast_1d(a),np.atleast_1d(r)))
-            if(done):
-                break
-    return traces
+            #a = np.clip(pol.act(phi,noises[l], deterministic=deterministic),tp.min_action,tp.max_action)
+            a = np.array([pol.act(phi,noises[l], deterministic=deterministic)])
+            if fast_step is not None:
+                s,r,done,_ = fast_step(s, a)
+            else:
+                s,r,done,_ = env.step(a)
 
-def process_initializer(q):
+            features[n,l] = np.atleast_1d(phi)
+            actions[n,l] = np.atleast_1d(a)
+            rewards[n,l] = r
+
+            if(done):
+                trace_length[n] = l
+                break
+
+    # features = stats.zscore(features, axis=1)
+    # actions = stats.zscore(actions, axis=1)
+    # features = (features - np.min(features, axis=1, keepdims=True)) / (np.max(features, axis=1, keepdims=True) - np.min(features, axis=1, keepdims=True))
+    # actions = (actions - np.min(actions, axis=1, keepdims=True)) / (np.max(actions, axis=1, keepdims=True) - np.min(actions, axis=1, keepdims=True))
+
+    if batch_size > 0:
+        # scores_theta = apply_along_axis2(pol.score,2,actions,features)
+        # scores_sigma = apply_along_axis2(pol.score_sigma,2,actions,features)
+
+        scores_theta = fast_utils.fast_calc_score_theta(actions, features, pol.theta_mat, np.asscalar(pol.inv_cov))
+        scores_sigma = fast_utils.fast_calc_score_sigma(actions, features, pol.theta_mat, np.asscalar(pol.cov))
+
+    else:
+        scores_theta = np.zeros((batch_size, tp.H, pol.feat_dim)).squeeze()
+        scores_sigma = np.zeros((batch_size, tp.H))
+
+    return features, actions, rewards, scores_theta, scores_sigma, trace_length
+
+
+
+#Trajectory (can be run in parallel)
+def trajectory_parallel(tp, pol, feature_fun, batch_size, initial=None, noises=[], deterministic=False, fast_step = None):
+    p = multiprocessing.current_process()
+    # return fast_trajectory(p.env, tp, pol, feature_fun, batch_size, initial, noises, deterministic)
+    return trajectory_serial(p.env, tp, pol, feature_fun, batch_size, initial, noises, deterministic, fast_step=fast_step)
+
+
+
+def process_initializer(q, env_name):
     p = multiprocessing.current_process()
     seed = q.get()
     #p.env = env
-    p.env = gym.make('LQG1D-v0')
-    p.env.seed(seed)
+    # p.env = gym.make('LQG1D-v0')
+    # p.env = gym.make(env_name)
     np.random.seed(seed % 2**32)
     random.seed(seed)
+    if env_name.startswith('RLLAB:'):
+        p.env = normalize(CartpoleEnv())
+        #p.env.wrapped_env.pole.inertia = 0.25   # @CHANGED
+    else:
+        p.env = gym.make(env_name)
+        if 'env' in p.env.__dict__:
+            p.env = p.env.env
+        p.env.seed(seed)
+
+    def signal_handler(signal, frame):
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+
 
 
 class BaseExperiment(object):
     def __init__(self,
-                env,
+                env_name,
                 task_prop,
                 meta_selector,
                 constr=OptConstr(),
                 feature_fun=identity,
                 evaluate=zero_fun,
                 name = 'Budget exp',
-                random_seed = 2**32+4):
-        self.env = env
+                random_seed = 1,
+                initial_budget = 0):
+        self.env_name = env_name
+        if self.env_name == 'LQG1D-v0':
+            self.fast_step = fast_utils.step_lqg
+            # self.fast_step = None
+        elif self.env_name == 'MountainCarContinuous-v0':
+            self.fast_step = fast_utils.step_mountain_car
+        elif self.env_name == 'ContCartPole-v0':
+            self.fast_step = fast_utils.step_cartpole
+        elif self.env_name == 'ContCartPoleRLLab-v0':
+            self.fast_step = fast_utils.step_cartpole_rllab
+        elif self.env_name == 'ContinuousAcrobot-v0':
+            self.fast_step = fast_utils.step_acrobot
+        else:
+            self.fast_step = None
+
+        if self.env_name.startswith('RLLAB:'):
+            self.fast_step = None
+            self.env = normalize(CartpoleEnv())
+
+            #self.env.wrapped_env.pole.inertia = 0.25   # @CHANGED
+        else:
+            self.env = gym.make(env_name)
+            self.env.seed(random_seed)
+
+
+
         self.task_prop = task_prop
         self.meta_selector = meta_selector
         self.constr = constr
         self.feature_fun = feature_fun
         self.evaluate = evaluate
 
-        self.budget = 0
+        self.budget = initial_budget
         self.data = []
         self.count = 0
+        self.descs = None
 
-        self.n_cores = multiprocessing.cpu_count()
+        self.n_cores = multiprocessing.cpu_count() // 2
         self.name = name
 
         self.random_seed = random_seed
         np.random.seed(random_seed % 2**32)
         random.seed(random_seed)
-        self.env.seed(random_seed)
+
+
+        self.pool = None
 
     def get_param_list(self, params):
         """Returns a dictionary containing all the data related to an experiment
@@ -109,24 +188,34 @@ class BaseExperiment(object):
         params['gamma'] = self.task_prop.gamma
         params['name'] = self.name
         params.update(self.constr.__dict__)
+        try:
+            params['confidence'] = params['meta_selector'].confidence
+        except:
+            pass
+        for i,t in enumerate(params['policy'].theta_mat.ravel()):
+            params['theta_' + str(i)] = t
+
+        params['sigma'] = params['policy'].sigma
         del params['policy']
 
         return dict(params)
 
     def _get_trajectories(self, policy, batch_size, parallel=True, deterministic=False):
         if parallel:
-            args = [[self.task_prop, policy, self.feature_fun, b, None, [], deterministic] for b in split_batch_sizes(batch_size, self.n_cores)]
-            traces = np.concatenate(self.pool.starmap(trajectory_parallel, args))
+            args = [[self.task_prop, policy, self.feature_fun, b, None, [], deterministic, self.fast_step] for b in split_batch_sizes(batch_size, self.n_cores)]
+            data = self.pool.starmap(trajectory_parallel, args)
+
+            features = np.concatenate([data[i][0] for i in range(len(data))])
+            actions = np.concatenate([data[i][1] for i in range(len(data))])
+            rewards = np.concatenate([data[i][2] for i in range(len(data))])
+            scores_theta = np.concatenate([data[i][3] for i in range(len(data))])
+            scores_sigma = np.concatenate([data[i][4] for i in range(len(data))])
+            trace_length = np.concatenate([data[i][5] for i in range(len(data))])
         else:
-            traces = np.zeros((batch_size, self.task_prop.H, policy.feat_dim + policy.act_dim + 1))
-            for n in range(batch_size):
-                trajectory(self.env, self.task_prop, policy, self.feature_fun, traces, n, deterministic=deterministic)
+            features, actions, rewards, scores_theta, scores_sigma, trace_length = trajectory_serial(self.env, self.task_prop, policy, self.feature_fun, batch_size, None, [], deterministic, fast_step=self.fast_step)
 
-        features = traces[:,:,:policy.feat_dim]
-        actions = traces[:,:,policy.feat_dim:policy.feat_dim+policy.act_dim]
-        rewards = traces[:,:,-1]
 
-        return features, actions, rewards
+        return features, actions, rewards, scores_theta, scores_sigma, trace_length
 
     def estimate_policy_performance(self, policy, N, parallel=False, deterministic=False, get_min=False):
         """Estimates the policy performance
@@ -137,7 +226,7 @@ class BaseExperiment(object):
 
         Returns: the performance of the Policy
         """
-        _, _, rewards = self._get_trajectories(policy, N, parallel=parallel, deterministic=deterministic)
+        _, _, rewards, _, _, _ = self._get_trajectories(policy, N, parallel=parallel, deterministic=deterministic)
         J_hat = performance(rewards, self.task_prop.gamma, average=False)
 
         if get_min:
@@ -160,12 +249,12 @@ class BaseExperiment(object):
 
         Returns: a tuple (features, actions, rewards, J, gradients)
         """
-        features, actions, rewards = self._get_trajectories(policy, N, parallel=parallel)
+        features, actions, rewards, scores_theta, scores_sigma, trace_lengths = self._get_trajectories(policy, N, parallel=parallel)
         self.task_prop.update(features, actions, rewards, self.use_local_stats)
         self.estimator.update(self.task_prop)
 
         J = performance(rewards, self.task_prop.gamma)
-        gradients = self.estimator.estimate(features, actions, rewards, policy)
+        gradients = self.estimator.estimate(features, actions, rewards, scores_theta, scores_sigma, trace_lengths, policy)
 
         return features, actions, rewards, J, gradients
 
@@ -174,7 +263,7 @@ class BaseExperiment(object):
         for i in range(self.n_cores):
             q.put(np.random.randint(0,2**32))
 
-        self.pool = multiprocessing.Pool(self.n_cores, initializer=process_initializer, initargs=(q,))
+        self.pool = multiprocessing.Pool(self.n_cores, initializer=process_initializer, initargs=(q,self.env_name))
 
     def save_data(self, filename):
         col_names = self.get_checkpoint_description()
@@ -190,22 +279,44 @@ class BaseExperiment(object):
 
         data_row = [
             self.count,
-            params['gradients']['grad_theta'],
             params['gradients']['grad_w'],
-            params['gradients']['grad_mixed'],
             params['gradients']['gradDeltaW'],
             safe_get('prevJ'),
             safe_get('prevJ_det'),
             safe_get('alpha'),
             safe_get('beta'),
             safe_get('N'),
-            np.asscalar(params['policy'].theta_mat),
             params['policy'].sigma,
             self.budget,
-            safe_get('N2'),
             safe_get('J_journey'),
             safe_get('J_det_exact')
         ]
+        thetas = np.atleast_1d(params['policy'].theta_mat).ravel()
+        for t in thetas:
+            data_row.append(t)
+
+        grad_thetas = np.atleast_1d(params['gradients']['grad_theta']).ravel()
+        for t in grad_thetas:
+            data_row.append(t)
+
+        grad_mixeds = np.atleast_1d(params['gradients']['grad_mixed']).ravel()
+        for t in grad_mixeds:
+            data_row.append(t)
+
+        if self.descs is None:
+            descs = ['T','GRAD_W','GRAD_DELTAW','J','J_DET','ALPHA',
+                    'BETA','N','SIGMA','BUDGET','J_JOURNEY','J_DET_EXACT']
+
+            for i,_ in enumerate(thetas):
+                descs.append('THETA_' + str(i))
+
+            for i,_ in enumerate(grad_thetas):
+                descs.append('GRAD_THETA_' + str(i))
+
+            for i,_ in enumerate(grad_mixeds):
+                descs.append('GRAD_MIXED_' + str(i))
+
+            self.descs = descs
 
         return data_row
 
@@ -215,22 +326,8 @@ class BaseExperiment(object):
         self.count += 1
 
     def get_checkpoint_description(self):
-        return ['T',
-                'GRAD_THETA',
-                'GRAD_W',
-                'GRAD_MIXED',
-                'GRAD_DELTAW',
-                'J',
-                'J_DET',
-                'ALPHA',
-                'BETA',
-                'N',
-                'THETA',
-                'SIGMA',
-                'BUDGET',
-                'N2',
-                'J_JOURNEY',
-                'J_DET_EXACT']
+        return self.descs
+
 
     def run(self, *args, **kwargs):
         raise NotImplementedError()
@@ -277,17 +374,28 @@ class CollectDataExperiment(BaseExperiment):
             ]
 
 
-class MonotonicOnlyTheta(BaseExperiment):
-    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+class Adam(BaseExperiment):
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.0):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
-        N = self.constr.N_min       # Total number of trajectories to take in this iteration
+        N = self.constr.N_min
+        if isinstance(self.meta_selector, ConstMeta):
+            alpha = self.meta_selector.alpha
+        else:
+            alpha = 0.001
+        adam_selector = AdamOptimizer(alpha=alpha)
 
-        #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
         # COMPUTE BASELINES
         features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
@@ -300,15 +408,89 @@ class MonotonicOnlyTheta(BaseExperiment):
         while iteration < self.constr.max_iter:
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
-
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', J_hat, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', prevJ, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+            J_journey += J_hat * N
+
+            updates = adam_selector.select(gradients)
+            policy.update(updates[:policy.feat_dim])
+            policy.update_w(updates[policy.feat_dim:])
+
+            J_journey /= N
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached\nEnd experiment')
+                break
+
+        # SAVE DATA
+
+        self.save_data(filename)
+
+
+class MonotonicOnlyTheta(BaseExperiment):
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.0):
+        self.use_local_stats = False
+        self.initial_configuration = self.get_param_list(locals())
+        self.estimator = Estimators(self.task_prop, self.constr)
+
+        N = self.constr.N_min       # Total number of trajectories to take in this iteration
+        #Multiprocessing preparation
+        if parallel:
+            self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+        # COMPUTE BASELINES
+        features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+
+        #Learning
+        iteration = 0; N_tot = 0; J_hat = prevJ
+        J_journey = prevJ
+        start_time = time.time()
+
+        while iteration < self.constr.max_iter:
+            iteration+=1
+            J_det_exact = self.evaluate(policy, deterministic=True)
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
+            J_journey = 0
+
+            # PRINT
+            if verbose:
+                if iteration % 50 == 1:
+                    print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+                print(iteration, '\t', N, '\t', prevJ, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', prevJ, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 
@@ -329,9 +511,76 @@ class MonotonicOnlyTheta(BaseExperiment):
 
         self.save_data(filename)
 
+class MonotonicNaiveGradient(BaseExperiment):
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.0):
+        self.use_local_stats = False
+        self.initial_configuration = self.get_param_list(locals())
+        self.estimator = Estimators(self.task_prop, self.constr)
+
+        N = self.constr.N_min // 2       # Total number of trajectories to take in this iteration
+
+        #Multiprocessing preparation
+        if parallel:
+            self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+        # COMPUTE BASELINES
+        features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+
+        #Learning
+        iteration = 0; N_tot = 0; J_hat = prevJ
+        J_journey = prevJ
+        start_time = time.time()
+
+        while iteration < self.constr.max_iter:
+            iteration+=1
+            J_det_exact = self.evaluate(policy, deterministic=True)
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
+            J_journey = 0
+
+            # PRINT
+            if verbose:
+                if iteration % 50 == 1:
+                    print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+                print(iteration, '\t', N, '\t', prevJ, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', prevJ, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+            J_journey += J_hat * N
+
+            alpha, _ , _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N, iteration, budget=None)
+            policy.update(alpha * gradients['grad_theta'])
+            policy.update_w(np.max(alpha) * gradients['grad_w'])
+
+            J_journey /= N
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached\nEnd experiment')
+                break
+
+        # SAVE DATA
+
+        self.save_data(filename)
+
 class MonotonicThetaAndSigma(BaseExperiment):
-    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -340,6 +589,13 @@ class MonotonicThetaAndSigma(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
         # COMPUTE BASELINES
         features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
@@ -356,14 +612,19 @@ class MonotonicThetaAndSigma(BaseExperiment):
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
-
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', J_det_exact, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 
@@ -392,8 +653,8 @@ class MonotonicThetaAndSigma(BaseExperiment):
         self.save_data(filename)
 
 class MonotonicZeroBudgetEveryStep(BaseExperiment):
-    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -402,6 +663,13 @@ class MonotonicZeroBudgetEveryStep(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
         # COMPUTE BASELINES
         features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
@@ -419,14 +687,20 @@ class MonotonicZeroBudgetEveryStep(BaseExperiment):
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
-
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', J_det_exact, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 
@@ -457,8 +731,8 @@ class MonotonicZeroBudgetEveryStep(BaseExperiment):
         self.save_data(filename)
 
 class NoWorseThanBaselineEveryStep(BaseExperiment):
-    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self, policy, use_local_stats=False, parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -467,6 +741,13 @@ class NoWorseThanBaselineEveryStep(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
         # COMPUTE BASELINES
         features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
@@ -483,15 +764,23 @@ class NoWorseThanBaselineEveryStep(BaseExperiment):
         while iteration < self.constr.max_iter:
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
-
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', prevJ, '\t', 0, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', prevJ, '\t', J_det_exact, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -527,9 +816,10 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
             use_local_stats=False,  # Update task prop only with local stats
             parallel=True,
             filename=generate_filename(),
-            verbose=False):
+            verbose=False,
+            gamma = 1.):
 
-        self.use_local_stats = True
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -541,6 +831,13 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
 
         # COMPUTE BASELINES
@@ -557,16 +854,31 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
 
         while iteration < self.constr.max_iter:
             iteration+=1
-            J_det_exact = self.env.computeJ(policy.theta_mat, 0)
-            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            try:
+                J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            except:
+                try:
+                    J_det_exact = self.evaluate(policy.theta_mat, 0)
+                except:
+                    J_det_exact = 0
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
 
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -577,6 +889,7 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
             if iteration > 1:
                 self.budget += N3*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
@@ -656,9 +969,10 @@ class ExpBudget_SemiDetPolicy(BaseExperiment):
             use_local_stats=False,  # Update task prop only with local stats
             parallel=True,
             filename=generate_filename(),
-            verbose=False):
+            verbose=False,
+            gamma=1.):
 
-        self.use_local_stats = True
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -668,6 +982,13 @@ class ExpBudget_SemiDetPolicy(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
 
         # COMPUTE BASELINES
@@ -685,16 +1006,30 @@ class ExpBudget_SemiDetPolicy(BaseExperiment):
 
         while iteration < self.constr.max_iter:
             iteration+=1
-            J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            #J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            try:
+                J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            except:
+                try:
+                    J_det_exact = self.evaluate(policy.theta_mat, 0)
+                except:
+                    J_det_exact = 0
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
-
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -705,6 +1040,7 @@ class ExpBudget_SemiDetPolicy(BaseExperiment):
             if iteration > 1:
                 self.budget += N3*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
@@ -783,9 +1119,10 @@ class ExpBudget_DetPolicy(BaseExperiment):
             use_local_stats=False,  # Update task prop only with local stats
             parallel=True,
             filename=generate_filename(),
-            verbose=False):
+            verbose=False,
+            gamma=1.):
 
-        self.use_local_stats = True
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -795,6 +1132,13 @@ class ExpBudget_DetPolicy(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
 
         # COMPUTE BASELINES
@@ -813,14 +1157,15 @@ class ExpBudget_DetPolicy(BaseExperiment):
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
-
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
 
             start_time = time.time()
 
@@ -831,6 +1176,7 @@ class ExpBudget_DetPolicy(BaseExperiment):
             if iteration > 1:
                 self.budget += N3*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
@@ -876,8 +1222,8 @@ class ExpBudget_DetPolicy(BaseExperiment):
 
 
 class SimultaneousThetaAndSigma_half(BaseExperiment):
-    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -889,6 +1235,13 @@ class SimultaneousThetaAndSigma_half(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
 
         # COMPUTE BASELINES
@@ -907,14 +1260,21 @@ class SimultaneousThetaAndSigma_half(BaseExperiment):
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
-
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -926,6 +1286,7 @@ class SimultaneousThetaAndSigma_half(BaseExperiment):
             if iteration > 1:
                 self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, _, _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1//2, iteration, self.budget)
@@ -962,8 +1323,8 @@ class SimultaneousThetaAndSigma_half(BaseExperiment):
 
 
 class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
-    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -975,6 +1336,13 @@ class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
 
         # COMPUTE BASELINES
@@ -993,14 +1361,21 @@ class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
-
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -1012,6 +1387,7 @@ class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
             if iteration > 1:
                 self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, _, _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1//3, iteration, self.budget)
@@ -1047,8 +1423,8 @@ class SimultaneousThetaAndSigma_two_thirds_theta(BaseExperiment):
 
 
 class SimultaneousThetaAndSigma_two_thirds_sigma(BaseExperiment):
-    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False):
-        self.use_local_stats = True
+    def run(self,policy,use_local_stats=False,parallel=True,filename=generate_filename(),verbose=False, gamma=1.):
+        self.use_local_stats = False
         self.initial_configuration = self.get_param_list(locals())
         self.estimator = Estimators(self.task_prop, self.constr)
 
@@ -1060,6 +1436,13 @@ class SimultaneousThetaAndSigma_two_thirds_sigma(BaseExperiment):
         #Multiprocessing preparation
         if parallel:
             self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
 
 
         # COMPUTE BASELINES
@@ -1078,14 +1461,22 @@ class SimultaneousThetaAndSigma_two_thirds_sigma(BaseExperiment):
             iteration+=1
             J_det_exact = self.evaluate(policy, deterministic=True)
             self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
 
             J_journey = 0
 
             # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
             if verbose:
                 if iteration % 50 == 1:
                     print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
-                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
 
             start_time = time.time()
 
@@ -1097,6 +1488,7 @@ class SimultaneousThetaAndSigma_two_thirds_sigma(BaseExperiment):
             if iteration > 1:
                 self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma') - J(theta, sigma)
                 prevJ = J_hat
+                self.budget *= gamma
 
 
             alpha, _, _ = self.meta_selector.select_alpha(policy, gradients, self.task_prop, 2*N1//3, iteration, self.budget)

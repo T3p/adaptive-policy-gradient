@@ -1,6 +1,7 @@
 import numpy as np
 from utils import *
 import numba
+import utils
 import scipy.stats
 
 """Policy gradient estimation algorithms"""
@@ -336,7 +337,7 @@ class Estimators(object):
                 'grad_w_low' : -200,
                 'grad_w_high' : -200}
 
-    def estimate(self, features, actions, rewards, pol, average=True, use_baseline=True):
+    def estimate(self, features, actions, rewards, scores_theta, scores_sigma, trace_lengths, pol, average=True, use_baseline=True):
         #Data
         assert features.shape[:2]==actions.shape[:2]==rewards.shape[:2]
         N = features.shape[0]
@@ -347,40 +348,56 @@ class Estimators(object):
         disc_rewards = discount(rewards,self.gamma)
 
         #Eligibility vector
-        scores_theta = apply_along_axis2(pol.score,2,actions,features)
-        scores_sigma = apply_along_axis2(pol.score_sigma,2,actions,features)
+        # scores_theta = apply_along_axis2(pol.score,2,actions,features)
+        # scores_sigma = apply_along_axis2(pol.score_sigma,2,actions,features)
         scores_w = scores_sigma * math.exp(pol.w)
 
         cum_scores_theta = np.cumsum(scores_theta,1)
         cum_scores_sigma = np.cumsum(scores_sigma,1)
         cum_scores_w = np.cumsum(scores_w,1)
 
+
+        # MASK CUMULATIVE SCORES
+
+        idxs_theta = np.indices(cum_scores_theta.shape)[1]
+        idxs_w = np.indices(cum_scores_w.shape)[1]
+
+        if np.min(trace_lengths) != H:
+            print('- ', np.min(trace_lengths))
+            cum_scores_theta = np.ma.array(cum_scores_theta, mask=idxs_theta > trace_lengths.reshape((-1, 1, 1)))# if pol.feat_dim>1 else (-1, 1)))
+            cum_scores_w = np.ma.array(cum_scores_w, mask=idxs_w > trace_lengths.reshape(-1, 1))
+            cum_scores_sigma = np.ma.array(cum_scores_sigma, mask=idxs_w > trace_lengths.reshape(-1, 1))
+            disc_rewards = np.ma.array(disc_rewards, mask=np.indices(disc_rewards.shape)[1] > trace_lengths.reshape(-1, 1))
+
         #Optimal baseline:
         if use_baseline and N>=1:
-            # b_theta = self.__compute_baseline_theta_gpomdp(cum_scores_theta, disc_rewards)
-            # b_w = self.__compute_baseline_theta_gpomdp(cum_scores_w, disc_rewards)
-            # b_h = self.__compute_baseline_h(cum_scores_theta, cum_scores_sigma, disc_rewards)
             b_theta = _compute_baseline_theta_gpomdp(cum_scores_theta, disc_rewards)
             b_w = _compute_baseline_theta_gpomdp(cum_scores_w, disc_rewards)
             b_h = _compute_baseline_h(cum_scores_theta, cum_scores_sigma, disc_rewards)
         else:
             b_theta = np.zeros((H,m))
-            b_w = np.zeros((H,m))
+            b_w = np.zeros((H,))    #@TODO Change this when using multiple actions
             b_h = np.zeros((N,H,m))
 
         #gradient estimate:
         estimates_theta = np.sum((cum_scores_theta.T*disc_rewards.T).T - cum_scores_theta*b_theta,1)
         estimates_w = np.sum((cum_scores_w.T*disc_rewards.T).T - cum_scores_w*b_w,1)
 
-        grad_theta = np.mean(estimates_theta,0)
-        grad_w = np.mean(estimates_w,0)
+        grad_theta = utils.removemask(np.mean(estimates_theta,0))
+        grad_w = utils.removemask(np.mean(estimates_w,0))
+
 
         # ESTIMATES H
 
-        cum_scores_sigma_theta = cum_scores_sigma * cum_scores_theta
+        cum_scores_sigma_theta = (cum_scores_sigma.T * cum_scores_theta.T).T
         estimates_h = np.sum((cum_scores_sigma_theta.T*disc_rewards.T).T - cum_scores_sigma_theta*b_h,1)
 
-        h_gpomdp = np.mean(estimates_h, 0)
+        # print('H STD: ', np.std(estimates_h, axis=0))
+
+        h_gpomdp = utils.removemask(np.mean(estimates_h, 0))
+
+        # print('h_gpomdp = ', h_gpomdp)
+        # print('cum_scores_sigma_theta: ', cum_scores_sigma_theta.shape, 'b_h shape: ', b_h.shape)
 
 
         def _compute_grad_mixed_deltaw(h_estimate):
@@ -393,8 +410,8 @@ class Estimators(object):
             alphaStar=1/(2*c)
             # ESTIMATES GRAD DELTA W
             grad_sigma_alpha_star = sigma**2 * (2*self.C1*self.C2*sigma + 3*self.C1*self.C3) / (pol.act_dim * (self.C2 * sigma + self.C3)**2)
-            grad_sigma_norm_grad_theta = 2 * grad_theta * grad_mixed
-            grad_local_step = (1/2) * grad_theta**2 * grad_sigma_alpha_star
+            grad_sigma_norm_grad_theta = 2 * np.dot(grad_theta, grad_mixed)
+            grad_local_step = (1/2) * np.linalg.norm(grad_theta.ravel(), 2)**2 * grad_sigma_alpha_star
             grad_far_sighted = (1/2) * alphaStar * grad_sigma_norm_grad_theta
 
             gradDelta = grad_local_step + grad_far_sighted
@@ -405,6 +422,11 @@ class Estimators(object):
 
         grad_mixed, grad_deltaW = _compute_grad_mixed_deltaw(h_gpomdp)
 
+        # print('GRAD_DELTAW = ', grad_deltaW)
+        # print('GRADW = ', grad_w)
+        # print('GRAD_THETA: ', grad_theta)
+
+
         if self.approximate == True:
             N = self.opt_constr.N_min
             delta = self.opt_constr.delta
@@ -414,15 +436,20 @@ class Estimators(object):
             eps_theta = 0
             eps_w = 0
 
+        #print('GRAD_THETA', grad_theta, 'GRAD_W', grad_w, 'GRAD_MIXED', grad_mixed, 'GRAD_DELTA', grad_deltaW)
+        # grad_deltaW = 1
+        grad_deltaW += 1e-21
 
         return {'grad_theta' : grad_theta,
                 'grad_w' : grad_w,
                 'grad_mixed' : grad_mixed,
                 'gradDeltaW' : grad_deltaW,
-                'grad_theta_low' : np.max(np.abs(grad_theta) - eps_theta, 0),
-                'grad_theta_high' : np.abs(grad_theta) + eps_theta,
-                'grad_w_low' : np.max(np.abs(grad_w) - eps_w, 0),
-                'grad_w_high' : np.abs(grad_w) + eps_w}
+                'grad_theta_low' : np.linalg.norm(np.max(np.abs(grad_theta) - eps_theta, 0).ravel(), 2), # L2 norm
+                'grad_theta_high' : np.linalg.norm((np.abs(grad_theta) + eps_theta).ravel(), 1),      # L1 norm
+                'grad_w_low' : np.linalg.norm(np.max(np.abs(grad_w) - eps_w, 0).ravel(), 2),        # L2 norm
+                'grad_w_high' : np.linalg.norm((np.abs(grad_w) + eps_w).ravel(), 1),              # L1 norm
+                'grad_theta_inf_low' : np.linalg.norm(np.max(np.abs(grad_theta) - eps_theta, 0).ravel(), np.inf),
+                'grad_theta_inf_high' : np.linalg.norm((np.abs(grad_theta) + eps_theta).ravel(), np.inf)}
 
 
 def performance(rewards,gamma=None,average=True):
@@ -447,9 +474,14 @@ def _compute_baseline_theta_gpomdp(cum_scores, disc_rewards):
     np.putmask(den,den==0,1)
     return np.mean(((cum_scores**2).T*disc_rewards.T).T,0)/den
 
+
 @numba.jit
 def _compute_baseline_h(cum_scores_theta, cum_scores_sigma, disc_rewards):
-    num = np.mean(cum_scores_sigma * cum_scores_theta * disc_rewards * (cum_scores_sigma + cum_scores_theta), 0)
-    den = np.mean((cum_scores_sigma + cum_scores_theta)**2, 0)
+    sum_theta_sigma = (cum_scores_sigma.T + cum_scores_theta.T).T
+    mul_theta_sigma = (cum_scores_sigma.T * cum_scores_theta.T).T
+
+    num = np.mean((mul_theta_sigma.T * disc_rewards.T).T * sum_theta_sigma, 0) * sum_theta_sigma
+    den = np.mean(sum_theta_sigma**2, 0) * mul_theta_sigma
     np.putmask(den, den==0, 1)
-    return (cum_scores_sigma + cum_scores_theta) / (cum_scores_sigma * cum_scores_theta) * num/den
+    return num/den
+    #return num / den

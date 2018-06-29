@@ -8,10 +8,11 @@ import utils
 import adaptive_exploration
 import math
 import os
+import mass
 
 from gym.utils import seeding
 
-from utils import maybe_make_dir
+from utils import maybe_make_dir, zero_fun
 
 import argparse
 
@@ -32,6 +33,7 @@ AVAILABLE_EXPERIMENTS = {
 
 
 def run(experiment_class='Experiment',
+        env_name = 'MountainCarContinuous-v0',
         name='',
         batch_size=100,
         max_iters = 10000,
@@ -39,31 +41,47 @@ def run(experiment_class='Experiment',
         random_seed = 0,
         parallel=False,
         verbose=False,
+        confidence = 1,
+        sigma = 1,
+        theta = np.array([0, 0])
         ):
     print(experiment_class, name, batch_size, max_iters, random_seed)
     #Task
-    meta_selector = BudgetMetaSelector()
-    env = gym.make('LQG1D-v0')
-    R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
-    M = env.max_pos
-    gamma = env.gamma
-    H = env.horizon
-    tp = TaskProp(
-            gamma,
-            H,
-            -env.max_action,
-            env.max_action,
-            R,
-            M,
-            -env.max_pos,
-            env.max_pos,
-            2*env.max_action
-    )
+    meta_selector = BudgetMetaSelector(confidence=confidence)
+
+    env = gym.make(env_name)
+    # Tweak for mountain car
+    if 'env' in env.__dict__:
+        env = env.env
+    #R = np.asscalar(env.Q*env.max_pos**2+env.R*env.max_action**2)
+    gamma = 0.999
+    H = 1000#env.horizon
+
+    try:
+        tp = TaskProp(gamma,H,env.min_action,env.max_action)
+    except:
+        tp = TaskProp(gamma,H,-env.max_action,env.max_action)
+    # R = 0
+    # M = np.linalg.norm(np.array([env.max_position, env.min_position]), np.inf)
+
+    # tp = TaskProp(
+    #         gamma,
+    #         H,
+    #         -env.max_action,
+    #         env.max_action,
+    #         R,
+    #         M,
+    #         env.min_position,
+    #         env.max_position,
+    #         2*env.max_action
+    # )
     local = True
 
     #Policy
-    theta_0 = -0.1
-    w = math.log(1)#math.log(env.sigma_controller)
+    theta_0 = theta
+    # theta_0 = np.array([-0.1])
+    #w = np.array([[math.log(1), 0], [0, math.log(1)]])#math.log(env.sigma_controller)
+    w = np.array([math.log(sigma)])
     pol = ExpGaussPolicy(theta_0,w)
 
     #Features
@@ -76,21 +94,21 @@ def run(experiment_class='Experiment',
                 N_max=500000,
                 N_tot = 30000000,
                 max_iter = max_iters,
-                approximate_gradients=True
+                approximate_gradients=False
     )
 
     #Evaluation of expected performance
-    def evaluate(pol,deterministic=False):
-        var = 0 if deterministic else pol.cov
-        return env.computeJ(pol.theta_mat,var)
-
+    # def evaluate(pol,deterministic=False):
+    #     var = 0 if deterministic else pol.cov
+    #     return env.computeJ(pol.theta_mat,var)
+    evaluate = zero_fun
     #Run
     # exp = adaptive_exploration.Experiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
     # exp = adaptive_exploration.CollectDataExperiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name)
     # exp = adaptive_exploration.SafeExperiment(env, tp, grad_estimator, meta_selector, constr, feature_fun, evaluate, name=name, random_seed=random_seed)
 
     experiment = AVAILABLE_EXPERIMENTS[experiment_class]
-    exp = experiment(env, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed)
+    exp = experiment(env_name, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed)
 
     exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()))
 
@@ -110,9 +128,16 @@ if __name__ == '__main__':
     parser.add_argument('--filepath', dest='filepath', default='experiments', type=str, help='Where to save the data')
     parser.add_argument('--random_seed', dest='random_seed', default=seeding.create_seed(), type=int, help='Random seed')
     parser.add_argument('--experiment_class', dest='experiment_class', default=list(AVAILABLE_EXPERIMENTS.keys())[0], type=str, help='type of experiment: ' + ', '.join(AVAILABLE_EXPERIMENTS.keys()))
+    parser.add_argument('--env_name', dest='env_name', type=str, default='LQG1D-v0', help='Name of gym environment')
+    parser.add_argument('--confidence', dest='confidence', type=int, default=1, help='Multiply every step size by confidence')
 
-    args = parser.parse_args()
+    parser.add_argument('--sigma', dest = sigma, type=float, default=1, help="Value for sigma")
+    parser.add_argument('--theta', dest=theta, type=str, default = '[0,0]', help="Value for theta")
 
-    maybe_make_dir(args.filepath)
+    args = vars(parser.parse_args())
 
-    run(**vars(args))
+    args['theta'] = np.array(eval(args['theta']))
+
+    maybe_make_dir(args['filepath'])
+
+    run(**args)

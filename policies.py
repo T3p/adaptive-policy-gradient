@@ -3,6 +3,7 @@ import numpy as np
 import math
 from scipy.linalg import sqrtm
 import time
+import utils
 
 """Policies"""
 
@@ -23,6 +24,9 @@ class GaussPolicy:
 
         assert np.array_equal(cov,np.transpose(cov))
         self.cov = cov.astype(float)
+
+        self.chol_cov = np.linalg.cholesky(self.cov)
+
         d = self.act_dim = np.shape(cov)[0]
         self.sigma = math.sqrt(np.linalg.det(cov))
 
@@ -52,13 +56,13 @@ class GaussPolicy:
         mu = np.dot(self.theta_mat,phi)
 
         if deterministic:
-            return mu
+            return np.asscalar(mu) if np.size(mu) == 1 else np.ravel(mu)
 
         #Gaussian noise
         if noise is None:
             noise = normal(0,1,self.act_dim)
 
-        a = mu + np.dot(np.linalg.cholesky(self.cov),noise)
+        a = mu + np.dot(self.chol_cov,noise)
         return np.asscalar(a) if np.size(a)==1 else np.ravel(a)
 
     def prob(self,a,phi):
@@ -114,6 +118,9 @@ class GaussPolicy:
         if not c==None:
             return c
 
+        if R == 0:
+            return 10**9
+
         return float(R*M**2)/((1-gamma)**2*self.sigma**2)* \
             (float(volume)/math.sqrt(2*math.pi*self.sigma**2) + \
                 float(gamma)/(2*(1-gamma)))
@@ -132,18 +139,28 @@ class GaussPolicy:
 class ExpGaussPolicy(GaussPolicy):
     """Scalar implementation of a Gaussian Policy with variance parameterized with an exponential function
     """
-    def __init__(self,theta,w):
-        assert(np.isscalar(w))
+    def __init__(self,theta,w, min_sigma=0.0001, max_sigma=10.):
+        w = np.atleast_2d(w)
+        assert(utils.is_diagonal(w))
+
         self.w = w
-        super().__init__(theta, np.exp(w))
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
+        super().__init__(theta, np.diag(np.exp(np.diagonal(w))))
 
     def update_w(self, deltaW):
-        assert(np.isscalar(deltaW))
+        # print('deltaW =', deltaW)
+        # print('self.w = ', self.w)
+        deltaW = np.atleast_2d(deltaW)
+
         self.w += deltaW
+        self.w = np.clip(self.w, math.log(self.min_sigma), math.log(self.max_sigma))
 
         #self.cov = np.asmatrix(math.exp(self.w))
-        self.cov = np.atleast_2d(math.exp(self.w))
+        self.cov = np.atleast_2d(np.diag(np.exp(np.diagonal(self.w))))
         self.cov = np.power(self.cov, 2)
+
+        self.chol_cov = np.linalg.cholesky(self.cov)
 
         self.sigma = math.sqrt(np.linalg.det(self.cov))
         self.inv_cov = np.linalg.inv(self.cov)
@@ -160,10 +177,21 @@ class ExpGaussPolicy(GaussPolicy):
         # phi = np.asmatrix(phi).T
         # a = np.asmatrix(a).T
 
+        # score = np.dot(self.inv_cov, \
+        #             np.dot((a - np.dot(self.theta_mat,phi)),np.transpose(phi)))
+
+
         phi = np.atleast_2d(phi).T
         a = np.atleast_2d(a).T
 
-        return np.asscalar(((a-self.theta_mat*phi)**2 - self.cov)/(self.cov * np.sqrt(self.cov)))
+        # print('phi: ', phi)
+        # print('a: ', a)
+        # print('dot_prod: ', np.dot(self.theta_mat, phi))
+        # print('cov: ', self.cov)
+
+        score = ((a-np.dot(self.theta_mat, phi))**2 - self.cov)/(self.cov * np.sqrt(self.cov))
+
+        return np.asscalar(score) if np.size(score) == 1 else np.ravel(score)
 
     def penaltyCoeffSigma(self,R,M,gamma,volume,d=None):
         """Penalty coefficient for sigma for performance improvement bounds
