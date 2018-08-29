@@ -1,0 +1,26 @@
+Script: exp_adaptive_exploration.py
+
+Usage: python exp_adaptive_exploration.py <args>
+
+List of args:
+
+MANDATORY
+--name <name> -->  associate a name to the experiment, so that it can be easier to find later
+--batch_size <num> --> sets the batch size
+--max_iters <num>
+--filepath <path> --> where to save files
+--experiment_class <class> --> The algorithm to be run. One of ['Adam', 'MonotonicOnlyTheta', 'MonotonicNaiveGradient' : adaptive_exploration.MonotonicNaiveGradient, 'MonotonicThetaAndSigma', 'MonotonicZeroBudgetEveryStep', 'NoWorseThanBaselineEveryStep', 'ExpBudget_NoDetPolicy', 'ExpBudget_SemiDetPolicy', 'ExpBudget_DetPolicy', 'SimultaneousThetaAndSigma_half', 'SimultaneousThetaAndSigma_two_thirds_theta','SimultaneousThetaAndSigma_two_thirds_sigma']
+--env_name <name> --> The name of the environment. Any gym-like (e.g. LQG1D-v0, MountainCarContinuous-v0, ...) or RLLAB:Cartpole for RLLAB implementation
+--sigma <num> --> initial value of sigma
+--theta <num> --> initial value of theta. This can also be a vector (e.g. --theta [0,0,0]). Use \" if there are spaces (e.g. --theta "[0, 1, 1, 5]")
+
+OPTIONAL
+--confidence <num> --> multiplier of the step size, to fast prototyping. Default 1.
+--parallel -->  runs the sample phase in parallel.
+--verbose --> prints
+--random_seed <seed>
+--alpha <num> --> If set, then the step size will be fixed to this number
+--initial_budget <num> --> If set, start with an initial budget
+
+
+To plot, see the Ipython notebook named PlotTrajectory.ipynb
