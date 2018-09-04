@@ -6,8 +6,8 @@ import gym
 from scipy import stats
 import lqg1d
 import cartpole
-import cartpole_rllab
-import continuous_acrobot
+#import cartpole_rllab
+#import continuous_acrobot
 from joblib import Parallel,delayed
 import multiprocessing
 import tempfile,os
@@ -30,8 +30,8 @@ import os
 import fast_utils
 from fast_utils import step_mountain_car
 
-from rllab.envs.box2d.cartpole_env import CartpoleEnv
-from rllab.envs.normalized_env import normalize
+#from rllab.envs.box2d.cartpole_env import CartpoleEnv
+#from rllab.envs.normalized_env import normalize
 
 SAVE_FREQ = 100
 
@@ -1218,7 +1218,109 @@ class ExpBudget_DetPolicy(BaseExperiment):
         self.save_data(filename)
 
 
+class Greedy_DetPolicy(BaseExperiment):
+    def run(self,
+            policy,
+            use_local_stats=False,  # Update task prop only with local stats
+            parallel=True,
+            filename=generate_filename(),
+            verbose=False,
+            gamma=1.):
 
+        self.use_local_stats = False
+        self.initial_configuration = self.get_param_list(locals())
+        self.estimator = Estimators(self.task_prop, self.constr)
+
+        N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
+        N1, N2, N3 = self.split_trajectory_count(N)
+
+        #Multiprocessing preparation
+        if parallel:
+            self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+
+        # COMPUTE BASELINES
+        features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+        prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True, get_min=False)
+
+
+        #Learning
+        iteration = 0
+        N_tot = 0
+        start_time = time.time()
+        J_hat = prevJ
+        J_journey = (2*prevJ + prevJ_det)/3
+
+        while iteration < self.constr.max_iter:
+            iteration+=1
+            J_det_exact = self.evaluate(policy, deterministic=True)
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
+            J_journey = 0
+
+            # PRINT
+            if verbose:
+                if iteration % 50 == 1:
+                    print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N1, parallel=parallel)
+            J_journey += J_hat * N1
+
+            if iteration > 1:
+                self.budget += N3*(J_hat - prevJ)            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ = J_hat
+                self.budget *= gamma
+
+
+            alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
+            policy.update(alpha * gradients['grad_theta'])
+
+            # PERFORM SECOND STEP
+            newJ_det = self.estimate_policy_performance(policy, N2, parallel=parallel, deterministic=True)
+            J_journey += newJ_det * N2
+
+            self.budget += N2*(newJ_det - prevJ_det)    # B += J(theta', 0) - J(theta, 0)
+
+            prevJ_det = newJ_det
+
+            # PERFORM THIRD STEP
+            features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N3, parallel=parallel)
+            J_journey += J_hat * N3
+
+            self.budget += N1*(J_hat - prevJ)            # B += J(theta', sigma) - J(theta, sigma)
+            prevJ = J_hat
+
+            beta, N3, safe = self.meta_selector.select_beta(policy, gradients, self.task_prop, N3, iteration, self.budget)
+            policy.update_w(beta * gradients['grad_w'])
+
+
+
+
+            N_old = N
+            J_journey /= N
+            #Check if done
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached')
+                print('End experiment')
+                break
+
+
+        # SAVE DATA
+
+        self.save_data(filename)
 
 
 class SimultaneousThetaAndSigma_half(BaseExperiment):

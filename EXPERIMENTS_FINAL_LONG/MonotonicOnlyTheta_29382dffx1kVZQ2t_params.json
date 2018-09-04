@@ -1,0 +1,1 @@
+{"verbose": "True", "max_iter": "10000", "delta": "0.2", "filename": "EXPERIMENTS_FINAL_LONG/MonotonicOnlyTheta_29382dffx1kVZQ2t", "experiment": "MonotonicOnlyTheta", "use_local_stats": "True", "parallel": "False", "name": "MonotonicOnlyTheta_2", "approximate_gradients": "True", "N_min": "300", "N_max": "500000", "N_tot": "30000000", "gamma": "0.99"}

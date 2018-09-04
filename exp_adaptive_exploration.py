@@ -8,7 +8,7 @@ import utils
 import adaptive_exploration
 import math
 import os
-import continuous_acrobot
+#import continuous_acrobot
 import mass
 import fast_utils
 
@@ -19,8 +19,8 @@ from utils import maybe_make_dir, zero_fun
 import argparse
 
 
-from rllab.envs.box2d.cartpole_env import CartpoleEnv
-from rllab.envs.normalized_env import normalize
+#from rllab.envs.box2d.cartpole_env import CartpoleEnv
+#from rllab.envs.normalized_env import normalize
 
 
 AVAILABLE_EXPERIMENTS = {
@@ -35,7 +35,8 @@ AVAILABLE_EXPERIMENTS = {
         'ExpBudget_DetPolicy' : adaptive_exploration.ExpBudget_DetPolicy,
         'SimultaneousThetaAndSigma_half' : adaptive_exploration.SimultaneousThetaAndSigma_half,
         'SimultaneousThetaAndSigma_two_thirds_theta' : adaptive_exploration.SimultaneousThetaAndSigma_two_thirds_theta,
-        'SimultaneousThetaAndSigma_two_thirds_sigma' : adaptive_exploration.SimultaneousThetaAndSigma_two_thirds_sigma
+        'SimultaneousThetaAndSigma_two_thirds_sigma' : adaptive_exploration.SimultaneousThetaAndSigma_two_thirds_sigma,
+        'Greedy_DetPolicy' : adaptive_exploration.Greedy_DetPolicy
     }
 
 
