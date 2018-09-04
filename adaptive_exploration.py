@@ -1065,7 +1065,7 @@ class ExpBudget_NoDetPolicy2(BaseExperiment):
             J_journey += J_hat * N1
 
             if iteration > 1:
-                eps = np.sqrt(varJ / N)*sts.t.ppf(.05, N-1)
+                eps = np.sqrt(varJ / N)*sts.t.ppf(.55, N-1)
                 
                 self.budget += N3*(J_hat - prevJ - eps)            # B += J(theta, sigma') - J(theta, sigma)
                 prevJ = J_hat
@@ -1080,7 +1080,7 @@ class ExpBudget_NoDetPolicy2(BaseExperiment):
             features, actions, rewards, J_hat, varJ, gradients = self.get_trajectories_data2(policy, N3, parallel=parallel)
             J_journey += J_hat * N3
 
-            eps = np.sqrt(varJ / N)*sts.t.ppf(.05, N-1)
+            eps = np.sqrt(varJ / N)*sts.t.ppf(.55, N-1)
             self.budget += N1*(J_hat - prevJ - eps)            # B += J(theta', sigma) - J(theta, sigma)
             prevJ = J_hat
 
@@ -1459,7 +1459,7 @@ class ExpBudget_DetPolicy2(BaseExperiment):
             J_journey += J_hat * N1
 
             if iteration > 1:
-                eps = np.sqrt(varJ / N)*sts.t.ppf(.05, N-1)
+                eps = np.sqrt(varJ / N)*sts.t.ppf(.55, N-1)
                 self.budget += N3*(J_hat - prevJ - eps)            # B += J(theta, sigma') - J(theta, sigma)
                 prevJ = J_hat
                 self.budget *= gamma
@@ -1480,7 +1480,7 @@ class ExpBudget_DetPolicy2(BaseExperiment):
             features, actions, rewards, J_hat, varJ, gradients = self.get_trajectories_data2(policy, N3, parallel=parallel)
             J_journey += J_hat * N3
 
-            eps = np.sqrt(varJ / N)*sts.t.ppf(.05, N-1)
+            eps = np.sqrt(varJ / N)*sts.t.ppf(.55, N-1)
             self.budget += N1*(J_hat - prevJ - eps)            # B += J(theta', sigma) - J(theta, sigma)
             prevJ = J_hat
 
