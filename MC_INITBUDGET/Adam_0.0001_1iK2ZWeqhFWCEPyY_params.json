@@ -1,1 +1,0 @@
-{"max_iter": "15000", "delta": "0.9", "name": "Adam_0.0001_1", "sigma": "0.2", "experiment": "Adam", "N_tot": "30000000", "theta_1": "0.0", "filename": "MC_INITBUDGET/Adam_0.0001_1iK2ZWeqhFWCEPyY", "N_min": "100", "theta_0": "0.0", "gamma": "0.99", "approximate_gradients": "True", "verbose": "True", "N_max": "500000", "use_local_stats": "True", "parallel": "True"}

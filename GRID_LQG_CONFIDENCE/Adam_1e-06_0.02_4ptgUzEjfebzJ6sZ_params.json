@@ -1,1 +1,0 @@
-{"filename": "GRID_LQG_CONFIDENCE/Adam_1e-06_0.02_4ptgUzEjfebzJ6sZ", "name": "Adam_1e-06_0.02_4", "experiment": "Adam", "gamma": "0.99", "parallel": "False", "approximate_gradients": "True", "delta": "0.9", "theta_0": "-0.1", "use_local_stats": "True", "max_iter": "10000", "N_max": "500000", "N_tot": "30000000", "N_min": "100", "verbose": "True", "sigma": "0.02"}

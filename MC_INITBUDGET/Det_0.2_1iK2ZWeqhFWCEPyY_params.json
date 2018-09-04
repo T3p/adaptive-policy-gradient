@@ -1,1 +1,0 @@
-{"theta_0": "0.0", "parallel": "True", "gamma": "0.99", "name": "Det_0.2_1", "experiment": "ExpBudget_DetPolicy", "verbose": "True", "sigma": "0.6", "filename": "MC_INITBUDGET/Det_0.2_1iK2ZWeqhFWCEPyY", "use_local_stats": "True", "theta_1": "0.0", "delta": "0.9", "max_iter": "15000", "N_max": "500000", "approximate_gradients": "True", "N_tot": "30000000", "N_min": "100"}
