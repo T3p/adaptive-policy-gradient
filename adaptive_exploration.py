@@ -987,8 +987,162 @@ class ExpBudget_NoDetPolicy(BaseExperiment):
             ]
             
 
-
 class ExpBudget_NoDetPolicy2(BaseExperiment):
+    def run(self,
+            policy,
+            use_local_stats=False,  # Update task prop only with local stats
+            parallel=True,
+            filename=generate_filename(),
+            verbose=False,
+            gamma = 1.):
+
+        self.use_local_stats = False
+        self.initial_configuration = self.get_param_list(locals())
+        self.estimator = Estimators(self.task_prop, self.constr)
+
+        N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
+        # N1, N2, N3 = self.split_trajectory_count(N)
+        N1 = N // 2
+        N3 = N - N1
+
+        #Multiprocessing preparation
+        if parallel:
+            self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+
+        # COMPUTE BASELINES
+        features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+        prevJ_det = 0
+
+        #Learning
+        iteration = 0
+        N_tot = 0
+        start_time = time.time()
+        J_hat = prevJ
+        J_journey = prevJ
+        policy_low_variance = policy
+
+        while iteration < self.constr.max_iter:
+            iteration+=1
+            try:
+                J_det_exact = self.env.computeJ(policy.theta_mat, 0)
+            except:
+                try:
+                    J_det_exact = self.evaluate(policy.theta_mat, 0)
+                except:
+                    J_det_exact = 0
+            prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True)
+
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
+            J_journey = 0
+
+            # PRINT
+            # if verbose:
+            #     if iteration % 50 == 1:
+            #         print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+            #     print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', policy.get_theta(), '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            if verbose:
+                if iteration % 50 == 1:
+                    print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N1, parallel=parallel)
+            J_journey += J_hat * N1
+
+            if iteration > 1:
+                self.budget += N3*(J_hat - prevJ)/N            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ = J_hat
+                self.budget *= gamma
+
+
+            alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
+            policy.update(alpha * gradients['grad_theta'])
+
+
+            # PERFORM THIRD STEP
+            features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N3, parallel=parallel)
+            J_journey += J_hat * N3
+
+            self.budget += N1*(J_hat - prevJ)/N            # B += J(theta', sigma) - J(theta, sigma)
+            prevJ = J_hat
+
+            beta, N3, safe = self.meta_selector.select_beta(policy, gradients, self.task_prop, N3, iteration, self.budget)
+            policy.update_w(beta * gradients['gradDeltaW'])
+            # policy.update_w(beta * gradients['gradDeltaW'])
+
+
+            # COMPUTE OPTIMAL SIGMA_0 USING THE BOUND
+            # d = policy.penaltyCoeffSigma(self.task_prop.R, self.task_prop.M, self.task_prop.gamma, self.task_prop.volume)
+            # if self.budget / N2 >= -(gradients['grad_w']**2)/(4*d):
+            #     beta_minus = (1 - math.sqrt(1 - (4 * d * (-self.budget/N2))/(gradients['grad_w']**2))) / (2 * d)
+            #     beta_plus = (1 + math.sqrt(1 - (4 * d * (-self.budget/N2))/(gradients['grad_w']**2))) / (2 * d)
+            #     w_det = min(policy.w + beta_minus*gradients['grad_w'], policy.w + beta_plus*gradients['grad_w'])
+            #     policy_low_variance = policies.ExpGaussPolicy(np.copy(policy.theta_mat), w_det)
+            # else:
+            #     policy_low_variance = policy
+
+
+            # newJ_det = self.estimate_policy_performance(policy_low_variance, N2, parallel=parallel)
+            # J_journey += newJ_det * N2
+
+            # self.budget += N2*(newJ_det - prevJ_det)    # B += J(theta', 0) - J(theta, 0)
+
+            # prevJ_det = newJ_det
+
+            # beta, N3, safe = self.meta_selector.select_beta(policy, gradients, self.task_prop, N3, iteration, self.budget)
+
+
+            N_old = N
+            J_journey /= N
+            #Check if done
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached')
+                print('End experiment')
+                break
+
+            # def signal_handler(signal, frame):
+            #     self.save_data(filename)
+            #     sys.exit(0)
+            #
+            # #Manual stop
+            # signal.signal(signal.SIGINT, signal_handler)
+
+        # SAVE DATA
+
+        self.save_data(filename)
+
+
+    def _collect_data(self, params):
+        d = super()._collect_data(params)
+
+        return d + [
+            params['policy_low_variance'].sigma
+        ]
+
+    def get_checkpoint_description(self):
+        return super().get_checkpoint_description() + \
+            [
+                'sigma_det'
+            ]
+            
+
+
+class ExpBudget_NoDetPolicy3(BaseExperiment):
     def run(self,
             policy,
             use_local_stats=False,  # Update task prop only with local stats
@@ -1399,6 +1553,110 @@ class ExpBudget_DetPolicy(BaseExperiment):
         self.save_data(filename)
         
 class ExpBudget_DetPolicy2(BaseExperiment):
+    def run(self,
+            policy,
+            use_local_stats=False,  # Update task prop only with local stats
+            parallel=True,
+            filename=generate_filename(),
+            verbose=False,
+            gamma=1.):
+
+        self.use_local_stats = False
+        self.initial_configuration = self.get_param_list(locals())
+        self.estimator = Estimators(self.task_prop, self.constr)
+
+        N = N_old = self.constr.N_min       # Total number of trajectories to take in this iteration
+        N1, N2, N3 = self.split_trajectory_count(N)
+
+        #Multiprocessing preparation
+        if parallel:
+            self._enable_parallel()
+
+        def signal_handler(signal, frame):
+            if self.pool is not None:
+                self.pool.terminate()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+
+        # COMPUTE BASELINES
+        features, actions, rewards, prevJ, gradients = self.get_trajectories_data(policy, N, parallel=parallel)
+        prevJ_det = self.estimate_policy_performance(policy, N, parallel=parallel, deterministic=True, get_min=False)
+
+
+        #Learning
+        iteration = 0
+        N_tot = 0
+        start_time = time.time()
+        J_hat = prevJ
+        J_journey = (2*prevJ + prevJ_det)/3
+
+        while iteration < self.constr.max_iter:
+            iteration+=1
+            J_det_exact = self.evaluate(policy, deterministic=True)
+            self.make_checkpoint(locals())          # CHECKPOINT BEFORE SIGMA STEP
+            if iteration % SAVE_FREQ == 0:
+                self.save_data(filename)
+            J_journey = 0
+
+            # PRINT
+            if verbose:
+                if iteration % 50 == 1:
+                    print('IT\tN\t\tJ\t\t\tJ_DET\t\t\tTHETA\t\tSIGMA\t\t\tBUDGET')
+                print(iteration, '\t', N, '\t', J_hat, '\t', prevJ_det, '\t', '['+','.join(map(lambda x : str(x)[:6],policy.get_theta())) + ']', '\t', policy.sigma, '\t', self.budget / N, '\t', time.time() - start_time)
+
+            start_time = time.time()
+
+            # PERFORM FIRST STEP
+            features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N1, parallel=parallel)
+            J_journey += J_hat * N1
+
+            if iteration > 1:
+                self.budget += N3*(J_hat - prevJ)/N            # B += J(theta, sigma') - J(theta, sigma)
+                prevJ = J_hat
+                self.budget *= gamma
+
+
+            alpha, N1, safe = self.meta_selector.select_alpha(policy, gradients, self.task_prop, N1, iteration, self.budget)
+            policy.update(alpha * gradients['grad_theta'])
+
+            # PERFORM SECOND STEP
+            newJ_det = self.estimate_policy_performance(policy, N2, parallel=parallel, deterministic=True)
+            J_journey += newJ_det * N2
+
+            self.budget += N2*(newJ_det - prevJ_det)/N    # B += J(theta', 0) - J(theta, 0)
+
+            prevJ_det = newJ_det
+
+            # PERFORM THIRD STEP
+            features, actions, rewards, J_hat, gradients = self.get_trajectories_data(policy, N3, parallel=parallel)
+            J_journey += J_hat * N3
+
+            self.budget += N1*(J_hat - prevJ)/N            # B += J(theta', sigma) - J(theta, sigma)
+            prevJ = J_hat
+
+            beta, N3, safe = self.meta_selector.select_beta(policy, gradients, self.task_prop, N3, iteration, self.budget)
+            policy.update_w(beta * gradients['gradDeltaW'])
+
+
+
+
+            N_old = N
+            J_journey /= N
+            #Check if done
+            N_tot+=N
+            if N_tot >= self.constr.N_tot:
+                print('Total N reached')
+                print('End experiment')
+                break
+
+
+        # SAVE DATA
+
+        self.save_data(filename)
+        
+class ExpBudget_DetPolicy3(BaseExperiment):
     def run(self,
             policy,
             use_local_stats=False,  # Update task prop only with local stats
