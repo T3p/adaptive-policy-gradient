@@ -36,7 +36,9 @@ AVAILABLE_EXPERIMENTS = {
         'SimultaneousThetaAndSigma_half' : adaptive_exploration.SimultaneousThetaAndSigma_half,
         'SimultaneousThetaAndSigma_two_thirds_theta' : adaptive_exploration.SimultaneousThetaAndSigma_two_thirds_theta,
         'SimultaneousThetaAndSigma_two_thirds_sigma' : adaptive_exploration.SimultaneousThetaAndSigma_two_thirds_sigma,
-        'Greedy_DetPolicy' : adaptive_exploration.Greedy_DetPolicy
+        'Greedy_DetPolicy' : adaptive_exploration.Greedy_DetPolicy,
+        'ExpBudget_NoDetPolicy2' : adaptive_exploration.ExpBudget_NoDetPolicy2,
+        'ExpBudget_DetPolicy2' : adaptive_exploration.ExpBudget_DetPolicy2
     }
 
 
