@@ -30,4 +30,4 @@ taskset -ca 0-7 ...
 
 python3 exp_adaptive_exploration.py --name greedyDet1 --batch_size 100 --max_iters 20000 --filepath ./GREEDY --experiment_class Greedy_DetPolicy --env_name MountainCarContinuous-v0 --sigma 0.2 --theta [0,0] --initial_budget 1 --random_seed 42 --parallel --verbose
 
-taskset -ca 16-3 python3 exp_adaptive_exploration.py --name saferNoDet1 --batch_size 100 --max_iters 10000 --filepath ./SAFER --experiment_class ExpBudget_NoDetPolicy2 --env_name LQG1D-v0 --sigma 1 --theta -0.1 --initial_budget 0 --random_seed 1 --parallel --verbose
+taskset -ca 16-23 python3 exp_adaptive_exploration.py --name saferNoDet1 --batch_size 300 --max_iters 10000 --filepath ./SAFER --experiment_class ExpBudget_NoDetPolicy2 --env_name LQG1D-v0 --sigma 1 --theta -0.1 --initial_budget 0 --random_seed 1 --verbose
