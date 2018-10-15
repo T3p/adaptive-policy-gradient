@@ -144,7 +144,7 @@ def run(experiment_class='Experiment',
     experiment = AVAILABLE_EXPERIMENTS[experiment_class]
     exp = experiment(env_name, tp, meta_selector, constr, feature_fun, evaluate=evaluate, name=name, random_seed=random_seed, initial_budget=initial_budget)
 
-    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()), gamma=1)
+    exp.run(pol, local, parallel, verbose=verbose, filename=os.path.join(filepath, name + utils.generate_filename()), gamma=.99)
 
 
 
