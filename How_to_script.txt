@@ -26,7 +26,7 @@ OPTIONAL
 To plot, see the Ipython notebook named PlotTrajectory.ipynb
 
 
-taskset -ca 38-43 python3 exp_adaptive_exploration.py --name mcGreedy5 --batch_size 300 --max_iters 15000 --filepath ./GREEDY --experiment_class Greedy_DetPolicy --env_name MountainCarContinuous-v0 --sigma 0.2 --theta [0,0] --initial_budget 300 --random_seed 5 --parallel --verbose
+taskset -ca 49-53 python3 exp_adaptive_exploration.py --name mcGreedy5 --batch_size 300 --max_iters 15000 --filepath ./MC_INITBUDGET --experiment_class ExpBudget_NoDetPolicy --env_name MountainCarContinuous-v0 --sigma 0.2 --theta [0,0] --initial_budget 300 --random_seed 1 --verbose
 
 
 
